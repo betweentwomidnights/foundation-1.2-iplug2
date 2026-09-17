@@ -1,0 +1,4 @@
+[submodule "vendor/iPlug2"]
+	path = vendor/iPlug2
+	url = https://github.com/betweentwomidnights/iPlug2.git
+	branch = sa3-demo-tempo

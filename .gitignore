@@ -1,0 +1,14 @@
+build*/
+out/
+.DS_Store
+.vs/
+.vscode/
+CMakeUserPresets.json
+*.user
+*.suo
+*.VC.db
+*.VC.VC.opendb
+ipch/
+*.log
+*.tmp
+releases/
