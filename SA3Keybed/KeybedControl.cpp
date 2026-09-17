@@ -190,13 +190,15 @@ float KeybedControl::DrawGeneration(IGraphics& g, float left, float right, float
     mFxRect = IRECT(mWetRect.R + 10.f, y + 1.f, right, y + 25.f);
     const int fx = mPlugin.FxIndex();
     const auto& choices = kb::vocab::fx_choices();
-    DrawDropButton(g, mFxRect, fx >= 0 && fx < (int)choices.size() ? choices[(size_t)fx].c_str() : "fx: none");
+    DrawDropButton(g, mFxRect,
+                   fx >= 0 && fx < (int)choices.size() ? choices[(size_t)fx].c_str() : "let the model choose");
   }
   y += 26.f;
-  g.DrawText(Label(10.f, TextFaint()),
-             mPlugin.Wet() ? "wet bakes the space into every sample - it cannot be removed later"
-                           : "dry samples, so reverb and delay stay yours to add in the DAW",
-             IRECT(left + 92.f, y, right, y + 14.f));
+  const char* hint = !mPlugin.Wet() ? "dry samples, so reverb and delay stay yours to add in the DAW"
+                   : mPlugin.FxIndex() >= 0
+                       ? "wet bakes this space into every sample - it cannot be removed later"
+                       : "wet with no tag: the model picks a space, and it is baked in";
+  g.DrawText(Label(10.f, TextFaint()), hint, IRECT(left + 92.f, y, right, y + 14.f));
   y += 18.f;
 
   char value[32];
@@ -789,7 +791,7 @@ void KeybedControl::OpenFxMenu()
   if (!GetUI())
     return;
   mMenu.Clear();
-  mMenu.AddItem("none");
+  mMenu.AddItem("let the model choose");
   const auto& choices = kb::vocab::fx_choices();
   for (const auto& fx : choices)
     mMenu.AddItem(fx.c_str());

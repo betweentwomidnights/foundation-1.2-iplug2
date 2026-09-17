@@ -207,6 +207,17 @@ void SA3Keybed::SetDescriptor(const std::string& text)
   mDescriptor = joined;
 }
 
+void SA3Keybed::SetWet(bool wet)
+{
+  mWet = wet;
+  if (!wet || mFxIndex >= 0)
+    return;
+  const auto& choices = kb::vocab::fx_choices();
+  const auto it = std::find(choices.begin(), choices.end(), "Medium Reverb");
+  if (it != choices.end())
+    mFxIndex = (int)std::distance(choices.begin(), it);
+}
+
 void SA3Keybed::RollDescriptor()
 {
   std::random_device device;

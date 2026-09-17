@@ -55,7 +55,9 @@ public:
   void SetDescriptor(const std::string& text);   // cleans pasted keybed prompts
   void RollDescriptor();
   bool Wet() const { return mWet; }
-  void SetWet(bool wet) { mWet = wet; }
+  // Turning wet on with no tag chosen picks the model's most common space, so "wet" always
+  // names a sound; the tag can still be cleared to let the model decide.
+  void SetWet(bool wet);
   int FxIndex() const { return mFxIndex; }       // -1: no FX tag
   void SetFxIndex(int index) { mFxIndex = index; }
   int Steps() const { return mSteps; }
