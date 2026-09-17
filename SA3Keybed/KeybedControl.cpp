@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
+#include <random>
 
 namespace kb = sa3::sat::keybed;
 using namespace gary::ui;
@@ -188,14 +189,14 @@ float KeybedControl::DrawGeneration(IGraphics& g, float left, float right, float
   if (mPlugin.Wet())
   {
     mFxRect = IRECT(mWetRect.R + 10.f, y + 1.f, right, y + 25.f);
-    const int fx = mPlugin.FxIndex();
-    const auto& choices = kb::vocab::fx_choices();
+    const std::string label = mPlugin.FxLabel();
     DrawDropButton(g, mFxRect,
-                   fx >= 0 && fx < (int)choices.size() ? choices[(size_t)fx].c_str() : "let the model choose");
+                   Compact(label.empty() ? "let the model choose" : label,
+                           FitChars(mFxRect.W() - 24.f, 6.f)).c_str());
   }
   y += 26.f;
   const char* hint = !mPlugin.Wet() ? "dry samples, so reverb and delay stay yours to add in the DAW"
-                   : mPlugin.FxIndex() >= 0
+                   : !mPlugin.FxTags().empty()
                        ? "wet bakes this space into every sample - it cannot be removed later"
                        : "wet with no tag: the model picks a space, and it is baked in";
   g.DrawText(Label(10.f, TextFaint()), hint, IRECT(left + 92.f, y, right, y + 14.f));
@@ -792,10 +793,18 @@ void KeybedControl::OpenFxMenu()
     return;
   mMenu.Clear();
   mMenu.AddItem("let the model choose");
+  mMenu.AddItem("roll a chain");   // RC's weighted one-or-two-tag pick, same as the dice
+  mMenu.AddSeparator();
   const auto& choices = kb::vocab::fx_choices();
+  const auto& chosen = mPlugin.FxTags();
   for (const auto& fx : choices)
+  {
     mMenu.AddItem(fx.c_str());
-  mMenu.CheckItem(mPlugin.FxIndex() + 1, true);
+    if (std::find(chosen.begin(), chosen.end(), fx) != chosen.end())
+      mMenu.CheckItem(mMenu.NItems() - 1, true);
+  }
+  if (chosen.empty())
+    mMenu.CheckItem(0, true);
   mPopup = Popup::Fx;
   GetUI()->CreatePopupMenu(*this, mMenu, mFxRect);
 }
@@ -822,7 +831,15 @@ void KeybedControl::OnPopupMenuSelection(IPopupMenu* pMenu, int valIdx)
   if (index >= 0)
   {
     if (mPopup == Popup::Fx)
-      mPlugin.SetFxIndex(index - 1);
+    {
+      const auto& choices = kb::vocab::fx_choices();
+      if (index == 0)
+        mPlugin.SetFxTags({});
+      else if (index == 1)
+        mPlugin.SetFxTags(kb::random_fx_chain(std::random_device{}()));
+      else if (index >= 3 && index - 3 < (int)choices.size())
+        mPlugin.SetFxTags({choices[(size_t)(index - 3)]});
+    }
     else if (mPopup == Popup::PreviewRoot)
       mPlugin.SetPreviewRootLabel(kb::kPreviewRootMin + index);
   }

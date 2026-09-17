@@ -58,8 +58,11 @@ public:
   // Turning wet on with no tag chosen picks the model's most common space, so "wet" always
   // names a sound; the tag can still be cleared to let the model decide.
   void SetWet(bool wet);
-  int FxIndex() const { return mFxIndex; }       // -1: no FX tag
-  void SetFxIndex(int index) { mFxIndex = index; }
+  // FX tags carried by a Wet prompt: empty lets the model choose the space, one is a picked tag,
+  // and the dice can roll RC's one-or-two-tag chains.
+  const std::vector<std::string>& FxTags() const { return mFxTags; }
+  void SetFxTags(std::vector<std::string> tags);
+  std::string FxLabel() const;
   int Steps() const { return mSteps; }
   void SetSteps(int steps);
   float CfgScale() const { return mCfgScale; }
@@ -124,7 +127,7 @@ private:
   // generation settings (UI thread; persisted in the state chunk)
   std::string mDescriptor = "Rhodes Piano, Warm, Soft";
   bool mWet = false;
-  int mFxIndex = -1;
+  std::vector<std::string> mFxTags;
   int mSteps = 80;
   float mCfgScale = 6.f;
   bool mUseSeed = false;

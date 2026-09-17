@@ -25,7 +25,7 @@ namespace kb = sa3::sat::keybed;
 namespace
 {
 constexpr uint32_t kStateMagic = 0x53334B42u;   // "S3KB"
-constexpr uint32_t kStateVersion = 1u;
+constexpr uint32_t kStateVersion = 2u;   // 2: an FX tag list replaced the single FX index
 constexpr const char* kVariant = "foundation-1.2-keybeds";
 
 const char* RangeLabel(SA3Keybed::RangeChoice range)
@@ -64,7 +64,8 @@ SA3Keybed::SA3Keybed(const InstanceInfo& info)
     pGraphics->AttachPanelBackground(COLOR_BLACK);
     pGraphics->EnableMouseOver(true);
     pGraphics->AttachTextEntryControl();
-    pGraphics->AttachPopupMenuControl();
+    // No AttachPopupMenuControl: the full-window control below is attached after it and would
+    // paint over an in-graphics menu every frame. Without it, CreatePopupMenu uses the OS menu.
     if (!pGraphics->LoadFont(gary::ui::FontName, ROBOTO_FN))
       pGraphics->LoadFont(gary::ui::FontName, "Arial", ETextStyle::Normal);
     pGraphics->AttachControl(new KeybedControl(pGraphics->GetBounds(), *this), kKeybedControlTag);
@@ -210,12 +211,26 @@ void SA3Keybed::SetDescriptor(const std::string& text)
 void SA3Keybed::SetWet(bool wet)
 {
   mWet = wet;
-  if (!wet || mFxIndex >= 0)
-    return;
+  if (wet && mFxTags.empty())
+    mFxTags = {"Medium Reverb"};   // the most common reverb tag, so wet always names a space
+}
+
+void SA3Keybed::SetFxTags(std::vector<std::string> tags)
+{
   const auto& choices = kb::vocab::fx_choices();
-  const auto it = std::find(choices.begin(), choices.end(), "Medium Reverb");
-  if (it != choices.end())
-    mFxIndex = (int)std::distance(choices.begin(), it);
+  mFxTags.clear();
+  for (auto& tag : tags)
+    if (std::find(choices.begin(), choices.end(), tag) != choices.end() &&
+        std::find(mFxTags.begin(), mFxTags.end(), tag) == mFxTags.end())
+      mFxTags.push_back(std::move(tag));
+}
+
+std::string SA3Keybed::FxLabel() const
+{
+  std::string label;
+  for (const auto& tag : mFxTags)
+    label += (label.empty() ? "" : " + ") + tag;
+  return label;
 }
 
 void SA3Keybed::RollDescriptor()
@@ -223,6 +238,9 @@ void SA3Keybed::RollDescriptor()
   std::random_device device;
   const uint64_t seed = ((uint64_t)device() << 32) ^ device();
   mDescriptor = kb::random_descriptor(seed, mWet).descriptor;
+  // A wet roll picks the space too, following RC's one-or-two-tag chains.
+  if (mWet)
+    mFxTags = kb::random_fx_chain(seed ^ 0x9e3779b97f4a7c15ull);
 }
 
 void SA3Keybed::SetSteps(int steps)
@@ -323,8 +341,8 @@ bool SA3Keybed::StartJob(std::vector<kb::Chunk> chunks, std::string rangeLabel, 
   job.encoding = mEncoding;
   job.descriptor = mDescriptor;
   job.wet = mWet;
-  if (mWet && mFxIndex >= 0 && mFxIndex < (int)kb::vocab::fx_choices().size())
-    job.fx.push_back(kb::vocab::fx_choices()[(size_t)mFxIndex]);
+  if (mWet)
+    job.fx = mFxTags;
   job.chunks = std::move(chunks);
   job.rangeLabel = std::move(rangeLabel);
   job.steps = mSteps;
@@ -487,10 +505,13 @@ bool SA3Keybed::SerializeState(IByteChunk& chunk) const
   chunk.Put(&kStateVersion);
   chunk.PutStr(mDescriptor.c_str());
   const int32_t wet = mWet ? 1 : 0, useSeed = mUseSeed ? 1 : 0, hasLast = mHasLastSeed ? 1 : 0;
-  const int32_t fx = mFxIndex, steps = mSteps, previewCount = mPreviewCount, root = mPreviewRootLabel,
+  const int32_t steps = mSteps, previewCount = mPreviewCount, root = mPreviewRootLabel,
                 range = (int32_t)mRange;
+  const int32_t fxCount = (int32_t)mFxTags.size();
   chunk.Put(&wet);
-  chunk.Put(&fx);
+  chunk.Put(&fxCount);
+  for (const auto& tag : mFxTags)
+    chunk.PutStr(tag.c_str());
   chunk.Put(&steps);
   chunk.Put(&mCfgScale);
   chunk.Put(&useSeed);
@@ -520,7 +541,24 @@ int SA3Keybed::UnserializeState(const IByteChunk& chunk, int startPos)
   pos = chunk.GetStr(text, pos);
   mDescriptor = text.Get();
   pos = chunk.Get(&wet, pos);
-  pos = chunk.Get(&fx, pos);
+  std::vector<std::string> fxTags;
+  if (version >= 2u)
+  {
+    int32_t fxCount = 0;
+    pos = chunk.Get(&fxCount, pos);
+    for (int32_t i = 0; i < std::clamp<int32_t>(fxCount, 0, 8) && pos >= 0; ++i)
+    {
+      pos = chunk.GetStr(text, pos);
+      fxTags.emplace_back(text.Get());
+    }
+  }
+  else
+  {
+    pos = chunk.Get(&fx, pos);   // version 1 stored one index into the FX choices
+    const auto& choices = kb::vocab::fx_choices();
+    if (fx >= 0 && fx < (int32_t)choices.size())
+      fxTags.push_back(choices[(size_t)fx]);
+  }
   pos = chunk.Get(&steps, pos);
   pos = chunk.Get(&cfg, pos);
   pos = chunk.Get(&useSeed, pos);
@@ -538,7 +576,7 @@ int SA3Keybed::UnserializeState(const IByteChunk& chunk, int startPos)
     return pos;
 
   mWet = wet != 0;
-  mFxIndex = std::clamp<int>(fx, -1, (int)kb::vocab::fx_choices().size() - 1);
+  SetFxTags(std::move(fxTags));
   SetSteps(steps);
   SetCfgScale(cfg);
   mUseSeed = useSeed != 0;
