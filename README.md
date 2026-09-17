@@ -29,8 +29,8 @@ Formats: VST3, CLAP, and a standalone app.
 
 ## Build (Windows)
 
-1. Build sa3.cpp with SAT in libsa3 (the `feature/foundation-1.2-keybeds-abi` branch; its
-   `build.cmd` passes `-DSA3_BUILD_SAT=ON`): `cd ..\sa3.cpp && build.cmd cuda` (or `vulkan`).
+1. Build sa3.cpp with SAT in libsa3 (`build.cmd` passes `-DSA3_BUILD_SAT=ON`):
+   `cd ..\sa3.cpp && build.cmd cuda` (or `vulkan`).
 2. Fetch the iPlug2 fork and its SDKs:
    `git submodule update --init` then, in git-bash,
    `cd vendor/iPlug2/Dependencies/IPlug && ./download-iplug-sdks.sh && ./download-clap-sdks.sh`.
