@@ -158,6 +158,14 @@ void SA3Keybed::OnIdle()
           std::string ignored;
           keybed::ReadKitManifest(mKitDir, mManifest, ignored);
         }
+        const double chunkSeconds = mRender.LastChunkSeconds();
+        if (chunkSeconds > 0.5 && mSteps > 0)
+        {
+          // Normalize to 80 steps and smooth, so the build estimate tracks this machine.
+          const double at80 = chunkSeconds * 80.0 / (double)mSteps;
+          mChunkSecondsAt80 = 0.7 * mChunkSecondsAt80 + 0.3 * at80;
+          keybed::SaveSetting("chunk_seconds", std::to_string(mChunkSecondsAt80));
+        }
         mRender.Collect(mKeepResident);
         break;
       }
@@ -235,6 +243,9 @@ void SA3Keybed::LoadGlobalSettings()
   const std::string resident = keybed::LoadSetting("keep_resident");
   if (!resident.empty())
     mKeepResident = resident != "0";
+  const std::string chunkSeconds = keybed::LoadSetting("chunk_seconds");
+  if (!chunkSeconds.empty())
+    mChunkSecondsAt80 = std::clamp(std::strtod(chunkSeconds.c_str(), nullptr), 1.0, 600.0);
 }
 
 void SA3Keybed::SetModelsDir(const std::string& dir)
@@ -330,6 +341,11 @@ bool SA3Keybed::StartJob(std::vector<kb::Chunk> chunks, std::string rangeLabel, 
   }
   SetStatus(preview ? "rendering preview" : "building keyboard");
   return true;
+}
+
+double SA3Keybed::EstimatedSeconds(int chunks) const
+{
+  return std::max(0, chunks) * mChunkSecondsAt80 * (double)mSteps / 80.0;
 }
 
 std::string SA3Keybed::StatusText() const

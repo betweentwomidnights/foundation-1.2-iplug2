@@ -61,6 +61,8 @@ public:
   bool Busy() const noexcept { return mBusy.load(std::memory_order_acquire); }
   float Progress() const noexcept { return mProgress.load(std::memory_order_acquire); }
   int CurrentChunk() const noexcept { return mChunk.load(std::memory_order_acquire); }
+  // Seconds the last completed chunk took, so the UI can estimate a build on this machine.
+  double LastChunkSeconds() const noexcept { return mLastChunkSeconds.load(std::memory_order_acquire); }
   int TotalChunks() const noexcept { return mTotalChunks.load(std::memory_order_acquire); }
   std::string Status() const;
   std::vector<int> ActiveLabels() const;      // labels of the chunk being rendered
@@ -79,6 +81,7 @@ private:
   std::atomic<uint64_t> mRequestId{0};
   std::atomic<float> mProgress{0.f};
   std::atomic<int> mChunk{0};
+  std::atomic<double> mLastChunkSeconds{0.0};
   std::atomic<int> mTotalChunks{0};
 
   mutable std::mutex mMutex;          // guards everything below

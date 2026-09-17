@@ -3,6 +3,7 @@
 #include "Sa3Runtime.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -224,6 +225,7 @@ void KeybedRenderService::Run(KeybedJob job, uint64_t requestId)
   for (size_t index = 0; index < job.chunks.size(); ++index)
   {
     const kb::Chunk& chunk = job.chunks[index];
+    const auto chunkStarted = std::chrono::steady_clock::now();
     mChunk.store((int)index, std::memory_order_release);
     {
       std::lock_guard<std::mutex> lock(mMutex);
@@ -332,6 +334,8 @@ void KeybedRenderService::Run(KeybedJob job, uint64_t requestId)
       WriteKitManifest(kitDir, manifest, ignored);   // keep a usable kit on disk even if a later chunk fails
     }
     mProgress.store((float)(index + 1) / (float)job.chunks.size(), std::memory_order_release);
+    mLastChunkSeconds.store(std::chrono::duration<double>(std::chrono::steady_clock::now() - chunkStarted).count(),
+                            std::memory_order_release);
   }
 
   if (!kitDir.empty())

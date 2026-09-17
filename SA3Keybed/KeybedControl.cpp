@@ -61,10 +61,32 @@ int64_t ParseSeed(const char* text, int64_t fallback)
   return (int64_t)std::min<unsigned long long>(parsed, (unsigned long long)std::numeric_limits<int64_t>::max());
 }
 
+// Sounding pitch, note count, and chunk count for RC's C2-B5 / C2-F6 / C2-B6 prompt-label ranges.
 const char* RangeName(int index)
 {
-  static const char* names[] = {"C1-B4", "C1-F5", "C1-B5"};   // sounding pitch of RC's C2-B5/F6/B6 labels
+  static const char* names[] = {"C1-B4", "C1-F5", "C1-B5"};
   return names[std::clamp(index, 0, 2)];
+}
+
+int RangeNotes(int index)
+{
+  static const int notes[] = {48, 54, 60};
+  return notes[std::clamp(index, 0, 2)];
+}
+
+int RangeChunks(int index)
+{
+  return RangeNotes(index) / 6;
+}
+
+std::string ShortDuration(double seconds)
+{
+  char text[32];
+  if (seconds < 120.0)
+    std::snprintf(text, sizeof text, "~%.0fs", seconds);
+  else
+    std::snprintf(text, sizeof text, "~%.0fm", seconds / 60.0);
+  return text;
 }
 } // namespace
 
@@ -155,8 +177,9 @@ float KeybedControl::DrawDescriptor(IGraphics& g, float left, float right, float
 
 float KeybedControl::DrawGeneration(IGraphics& g, float left, float right, float y)
 {
-  // Dry / Wet + FX tag
-  g.DrawText(Label(11.f, TextDim()), "space", IRECT(left, y, left + 86.f, y + 26.f));
+  // Dry / Wet + FX tag. This is prompt conditioning, not a DSP effect: Wet asks the model to
+  // render the sample with that space already in it.
+  g.DrawText(Label(11.f, TextDim()), "render fx", IRECT(left, y, left + 86.f, y + 26.f));
   mDryRect = IRECT(left + 92.f, y + 1.f, left + 146.f, y + 25.f);
   mWetRect = IRECT(mDryRect.R + 6.f, y + 1.f, mDryRect.R + 60.f, y + 25.f);
   DrawTab(g, mDryRect, "dry", kFont, !mPlugin.Wet());
@@ -169,7 +192,12 @@ float KeybedControl::DrawGeneration(IGraphics& g, float left, float right, float
     const auto& choices = kb::vocab::fx_choices();
     DrawDropButton(g, mFxRect, fx >= 0 && fx < (int)choices.size() ? choices[(size_t)fx].c_str() : "fx: none");
   }
-  y += 32.f;
+  y += 26.f;
+  g.DrawText(Label(10.f, TextFaint()),
+             mPlugin.Wet() ? "wet bakes the space into every sample - it cannot be removed later"
+                           : "dry samples, so reverb and delay stay yours to add in the DAW",
+             IRECT(left + 92.f, y, right, y + 14.f));
+  y += 18.f;
 
   char value[32];
   std::snprintf(value, sizeof value, "%d", mPlugin.Steps());
@@ -214,17 +242,29 @@ float KeybedControl::DrawActions(IGraphics& g, float left, float right, float y)
   DrawButton(g, mPreviewRect, busy ? "cancel" : "preview", kFont, false, busy || ready);
   y += 36.f;
 
-  g.DrawText(Label(11.f, TextDim()), "keyboard", IRECT(left, y, left + 86.f, y + 28.f));
+  // Build size: how many keys get generated, where they land, and roughly how long that takes here.
+  g.DrawText(Label(11.f, TextDim()), "build size", IRECT(left, y, left + 86.f, y + 28.f));
+  mBuildRect = IRECT(right - 100.f, y, right, y + 28.f);
+  DrawButton(g, mBuildRect, busy ? "cancel" : "build", kFont, false, busy || ready);
+  const float tabsR = mBuildRect.L - 10.f;
+  const float tabW = (tabsR - (left + 92.f) - 12.f) / 3.f;
   x = left + 92.f;
   for (int i = 0; i < 3; ++i)
   {
-    mRangeRects[(size_t)i] = IRECT(x, y + 2.f, x + 58.f, y + 26.f);
-    DrawTab(g, mRangeRects[(size_t)i], RangeName(i), kFont, (int)mPlugin.Range() == i);
-    x += 62.f;
+    mRangeRects[(size_t)i] = IRECT(x, y + 2.f, x + tabW, y + 26.f);
+    char label[48];
+    std::snprintf(label, sizeof label, "%d keys", RangeNotes(i));
+    DrawTab(g, mRangeRects[(size_t)i], label, kFont, (int)mPlugin.Range() == i);
+    x += tabW + 6.f;
   }
-  mBuildRect = IRECT(right - 100.f, y, right, y + 28.f);
-  DrawButton(g, mBuildRect, busy ? "cancel" : "build", kFont, false, busy || ready);
-  return y + 38.f;
+  y += 30.f;
+  const int index = (int)mPlugin.Range();
+  char detail[96];
+  std::snprintf(detail, sizeof detail, "%s · %d chunks of 6 notes · %s at %d steps", RangeName(index),
+                RangeChunks(index), ShortDuration(mPlugin.EstimatedSeconds(RangeChunks(index))).c_str(),
+                mPlugin.Steps());
+  g.DrawText(Label(10.f, TextFaint()), detail, IRECT(left + 92.f, y, right, y + 14.f));
+  return y + 20.f;
 }
 
 float KeybedControl::DrawKeyboard(IGraphics& g, float left, float right, float y)

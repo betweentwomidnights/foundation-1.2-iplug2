@@ -92,6 +92,8 @@ public:
   std::string StatusText() const;
   bool StatusIsError() const { return mStatusIsError; }
   std::vector<int> ActiveLabels() const { return mRender.ActiveLabels(); }
+  // Rough wall-clock for a build of `chunks`, learned from this machine's last renders.
+  double EstimatedSeconds(int chunks) const;
 
   const keybed::BankSnapshot* Bank() const { return mBank.Latest(); }
   bool KeyHeld(int key) const { return mEngine.Held(key); }
@@ -136,6 +138,7 @@ private:
   std::string mModelsDir;
   std::string mEncoding = "F16";
   bool mKeepResident = true;
+  double mChunkSecondsAt80 = 10.0;   // measured seconds per chunk at 80 steps
 
   // kit
   std::string mKitDir;
