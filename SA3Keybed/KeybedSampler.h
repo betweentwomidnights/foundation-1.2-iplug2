@@ -2,9 +2,12 @@
 
 // Sample-playback engine for a generated keybed. The UI thread publishes immutable bank snapshots;
 // the audio thread reads the newest one lock-free at the start of each block. Voices keep a
-// shared_ptr to the sample they play, and retired snapshots are freed on the UI thread only after
+// shared_ptr to the samples they play, and retired snapshots are freed on the UI thread only after
 // the audio thread has moved past them and a grace period has elapsed, so sample memory is not
 // normally released on the audio thread.
+//
+// A layered keybed (RC's Main + two Supports) holds one sample per layer per key. A voice plays
+// every layer that has a sample for its key, each at its layer volume, like DecentSampler groups.
 
 #include "IPlugConstants.h"
 #include "IPlugMidi.h"
@@ -26,27 +29,45 @@ namespace keybed
 
 using namespace iplug;
 
+constexpr int kMaxLayers = 3;
+
 struct BankSnapshot
 {
-  std::array<NoteSamplePtr, 128> exact{};
-  std::array<int, 128> nearestKey{};   // -1 when the bank is empty
+  std::array<std::array<NoteSamplePtr, 128>, kMaxLayers> layers{};
+  std::array<std::array<int, 128>, kMaxLayers> nearestKey{};   // -1 when that layer is empty
+  std::array<NoteSamplePtr, 128> exact{};   // UI view: the main layer's sample, else any layer's
   uint64_t epoch = 0;
-  int count = 0;
+  int count = 0;        // keys with at least one sample
+  int layerCount = 0;   // layers with at least one sample
 
-  void BuildNearest()
+  void BuildIndex()
   {
     count = 0;
-    for (int k = 0; k < 128; ++k)
-      count += exact[(size_t)k] ? 1 : 0;
+    layerCount = 0;
     for (int k = 0; k < 128; ++k)
     {
-      nearestKey[(size_t)k] = -1;
-      for (int d = 0; d < 128 && nearestKey[(size_t)k] < 0; ++d)
+      exact[(size_t)k] = nullptr;
+      for (int l = 0; l < kMaxLayers && !exact[(size_t)k]; ++l)
+        exact[(size_t)k] = layers[(size_t)l][(size_t)k];
+      count += exact[(size_t)k] ? 1 : 0;
+    }
+    for (int l = 0; l < kMaxLayers; ++l)
+    {
+      const auto& samples = layers[(size_t)l];
+      bool any = false;
+      for (int k = 0; k < 128; ++k)
       {
-        // prefer the sample below: repitching up from a lower root keeps attacks tighter
-        if (k - d >= 0 && exact[(size_t)(k - d)]) nearestKey[(size_t)k] = k - d;
-        else if (k + d < 128 && exact[(size_t)(k + d)]) nearestKey[(size_t)k] = k + d;
+        auto& nearest = nearestKey[(size_t)l][(size_t)k];
+        nearest = -1;
+        for (int d = 0; d < 128 && nearest < 0; ++d)
+        {
+          // prefer the sample below: repitching up from a lower root keeps attacks tighter
+          if (k - d >= 0 && samples[(size_t)(k - d)]) nearest = k - d;
+          else if (k + d < 128 && samples[(size_t)(k + d)]) nearest = k + d;
+        }
+        any = any || samples[(size_t)k];
       }
+      layerCount += any ? 1 : 0;
     }
   }
 };
@@ -59,19 +80,20 @@ public:
     delete mCurrent.load(std::memory_order_acquire);
   }
 
-  // UI thread: install `notes` (replacing the whole bank when `replace`, otherwise merging over it).
+  // UI thread: install `notes` (each at its own layer), replacing the whole bank when `replace`,
+  // otherwise merging over it.
   void Publish(const std::vector<NoteSamplePtr>& notes, bool replace)
   {
     auto next = std::make_unique<BankSnapshot>();
     const BankSnapshot* current = mCurrent.load(std::memory_order_acquire);
     if (current && !replace)
-      next->exact = current->exact;
+      next->layers = current->layers;
     for (const auto& note : notes)
-      if (note && note->midi >= 0 && note->midi < 128)
-        next->exact[(size_t)note->midi] = note;
-    next->BuildNearest();
+      if (note && note->midi >= 0 && note->midi < 128 && note->layer >= 0 && note->layer < kMaxLayers)
+        next->layers[(size_t)note->layer][(size_t)note->midi] = note;
+    next->BuildIndex();
     next->epoch = ++mNextEpoch;
-    BankSnapshot* old = mCurrent.exchange(next.release(), std::memory_order_acquire);
+    BankSnapshot* old = mCurrent.exchange(next.release(), std::memory_order_acq_rel);
     if (old)
       mRetired.push_back({std::unique_ptr<BankSnapshot>(old), mNextEpoch, Clock::now()});
   }
@@ -130,6 +152,8 @@ struct SamplerSettings
   std::atomic<int> octave{0};
   std::atomic<bool> fillGaps{true};
   std::atomic<uint32_t> envelopeVersion{1};
+  // RC's tri-layer volumes; used only once a kit has more than one layer.
+  std::array<std::atomic<double>, kMaxLayers> layerVolume{{{0.90}, {0.60}, {0.35}}};
 };
 
 class KeybedEngine;
@@ -160,6 +184,13 @@ public:
   }
 
 private:
+  struct Layer
+  {
+    NoteSamplePtr sample;
+    double semitones = 0.;   // key distance from the sample root, before tune/bend
+    double pos = 0.;
+  };
+
   inline void ApplyEnvelopeTimes();
   inline void StartPending();
 
@@ -177,11 +208,10 @@ private:
 
   KeybedEngine& mEngine;
   ADSREnvelope<sample> mEnv;
-  NoteSamplePtr mSample;
-  NoteSamplePtr mPendingSample;
-  double mPendingSemitones = 0.;
-  double mSemitones = 0.;      // key distance from the sample root, before tune/bend
-  double mPos = 0.;
+  std::array<Layer, kMaxLayers> mLayers{};
+  std::array<Layer, kMaxLayers> mPending{};
+  bool mLayered = false;          // the bank this note came from had more than one layer
+  bool mPendingLayered = false;
   double mHostRate = 44100.;
   uint32_t mAppliedEnvelopeVersion = 0;
 };
@@ -264,34 +294,49 @@ inline void KeybedVoice::Trigger(double level, bool isRetrigger)
   const SamplerSettings& s = mEngine.settings;
   const BankSnapshot* bank = mEngine.mBlockBank;
   const int key = std::clamp((int)mKey + 12 * s.octave.load(std::memory_order_relaxed), 0, 127);
-  mPendingSample.reset();
-  if (bank)
+  const bool fill = s.fillGaps.load(std::memory_order_relaxed);
+  bool any = false;
+  for (int l = 0; l < kMaxLayers; ++l)
   {
-    int root = bank->exact[(size_t)key] ? key : -1;
-    if (root < 0 && s.fillGaps.load(std::memory_order_relaxed))
-      root = bank->nearestKey[(size_t)key];
+    Layer& pending = mPending[(size_t)l];
+    pending = Layer{};
+    if (!bank)
+      continue;
+    const auto& samples = bank->layers[(size_t)l];
+    int root = samples[(size_t)key] ? key : -1;
+    if (root < 0 && fill)
+      root = bank->nearestKey[(size_t)l][(size_t)key];
     if (root >= 0)
     {
-      mPendingSample = bank->exact[(size_t)root];
-      mPendingSemitones = (double)(key - root);
+      pending.sample = samples[(size_t)root];
+      pending.semitones = (double)(key - root);
+      any = true;
     }
   }
+  mPendingLayered = bank && bank->layerCount > 1;
   const double sens = std::clamp(s.velocity.load(std::memory_order_relaxed), 0., 1.);
   const double gain = (1. - sens) + sens * level * level;
-  if (isRetrigger && mSample)
+  bool playing = false;
+  for (const auto& layer : mLayers)
+    playing = playing || layer.sample;
+  if (isRetrigger && playing)
     mEnv.Retrigger(gain);   // StartPending runs when the steal fade reaches zero
   else
   {
     StartPending();
     mEnv.Start(gain);
   }
+  (void)any;
 }
 
 inline void KeybedVoice::StartPending()
 {
-  mSample = std::move(mPendingSample);
-  mSemitones = mPendingSemitones;
-  mPos = 0.;
+  for (int l = 0; l < kMaxLayers; ++l)
+  {
+    mLayers[(size_t)l] = std::move(mPending[(size_t)l]);
+    mPending[(size_t)l] = Layer{};
+  }
+  mLayered = mPendingLayered;
 }
 
 inline void KeybedVoice::ProcessSamplesAccumulating(sample** inputs, sample** outputs, int nInputs, int nOutputs,
@@ -301,28 +346,47 @@ inline void KeybedVoice::ProcessSamplesAccumulating(sample** inputs, sample** ou
   const sample sustain = (sample)std::clamp(s.sustain.load(std::memory_order_relaxed), 0., 1.);
   const double bendOctaves = mInputs[kVoiceControlPitchBend].endValue;
   const double tune = s.tuneSemitones.load(std::memory_order_relaxed);
-  const NoteSample* rateFor = nullptr;   // the increment is recomputed only when the sample changes
-  double increment = 1.;
+  std::array<double, kMaxLayers> volume{};
+  for (int l = 0; l < kMaxLayers; ++l)
+    volume[(size_t)l] = mLayered ? s.layerVolume[(size_t)l].load(std::memory_order_relaxed) : 1.;
+  // The increment is recomputed only when a layer's sample changes (e.g. a retrigger swap).
+  std::array<const NoteSample*, kMaxLayers> rateFor{};
+  std::array<double, kMaxLayers> increment{};
   for (int i = startIdx; i < startIdx + nFrames; ++i)
   {
-    const sample env = mEnv.Process(sustain);   // may swap in a pending sample on a retrigger
-    const NoteSample* note = mSample.get();
-    if (!note || note->frames < 2)
-      continue;
-    if (mPos >= (double)(note->frames - 1))
+    const sample env = mEnv.Process(sustain);   // may swap in pending samples on a retrigger
+    bool sounding = false;
+    for (int l = 0; l < kMaxLayers; ++l)
     {
-      mSample.reset();
-      mEnv.Kill(true);
-      continue;
+      Layer& layer = mLayers[(size_t)l];
+      const NoteSample* note = layer.sample.get();
+      if (!note || note->frames < 2)
+        continue;
+      if (layer.pos >= (double)(note->frames - 1))
+      {
+        layer.sample.reset();
+        continue;
+      }
+      if (note != rateFor[(size_t)l])
+      {
+        increment[(size_t)l] = std::pow(2., (layer.semitones + tune) / 12. + bendOctaves) *
+                               (double)note->sampleRate / mHostRate;
+        rateFor[(size_t)l] = note;
+      }
+      const double g = env * volume[(size_t)l];
+      outputs[0][i] += (sample)(Hermite(note->left, note->frames, layer.pos) * g);
+      outputs[1][i] += (sample)(Hermite(note->right, note->frames, layer.pos) * g);
+      layer.pos += increment[(size_t)l];
+      sounding = true;
     }
-    if (note != rateFor)
+    if (!sounding && mEnv.GetBusy())
     {
-      increment = std::pow(2., (mSemitones + tune) / 12. + bendOctaves) * (double)note->sampleRate / mHostRate;
-      rateFor = note;
+      bool pending = false;
+      for (const auto& p : mPending)
+        pending = pending || p.sample;
+      if (!pending)
+        mEnv.Kill(true);   // every layer's sample has ended
     }
-    outputs[0][i] += Hermite(note->left, note->frames, mPos) * env;
-    outputs[1][i] += Hermite(note->right, note->frames, mPos) * env;
-    mPos += increment;
   }
 }
 

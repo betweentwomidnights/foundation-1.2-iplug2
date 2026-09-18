@@ -187,6 +187,14 @@ float KeybedControl::DrawDescriptor(IGraphics& g, float left, float right, float
   g.DrawText(Label(10.f, mPlugin.Wet() ? TextDim() : TextFaint()),
              Compact(space, FitChars(mDescriptorRect.W(), 5.4f)).c_str(),
              IRECT(left + 2.f, y + 52.f, right, y + 66.f));
+  if (mPlugin.LayerCount() > 1)
+  {
+    // Layered keybed: the support layers render after main, in the same space.
+    const std::string supports = "+ " + mPlugin.LayerSummary();   // "edit" opens the layer tabs
+    g.DrawText(Label(10.f, TextDim()), Compact(supports, FitChars(right - left, 5.4f)).c_str(),
+               IRECT(left + 2.f, y + 66.f, right, y + 80.f));
+    return y + 86.f;
+  }
   return y + 72.f;
 }
 
@@ -253,9 +261,14 @@ float KeybedControl::DrawActions(IGraphics& g, float left, float right, float y)
   y += 30.f;
   const int index = (int)mPlugin.Range();
   char detail[96];
-  std::snprintf(detail, sizeof detail, "%s · %d chunks of 6 notes · %s at %d steps", RangeName(index),
-                RangeChunks(index), ShortDuration(mPlugin.EstimatedSeconds(RangeChunks(index))).c_str(),
-                mPlugin.Steps());
+  const int layers = mPlugin.LayerCount();
+  const std::string eta = ShortDuration(mPlugin.EstimatedSeconds(layers * RangeChunks(index)));
+  if (layers > 1)   // every layer is a full keyboard of its own
+    std::snprintf(detail, sizeof detail, "%s · %d layers x %d chunks · %s at %d steps", RangeName(index), layers,
+                  RangeChunks(index), eta.c_str(), mPlugin.Steps());
+  else
+    std::snprintf(detail, sizeof detail, "%s · %d chunks of 6 notes · %s at %d steps", RangeName(index),
+                  RangeChunks(index), eta.c_str(), mPlugin.Steps());
   g.DrawText(Label(10.f, TextFaint()), detail, IRECT(left + 92.f, y, right, y + 14.f));
   return y + 20.f;
 }
@@ -317,7 +330,10 @@ float KeybedControl::DrawKeyboard(IGraphics& g, float left, float right, float y
 
 float KeybedControl::DrawNoteWaveform(IGraphics& g, float left, float right, float y)
 {
-  const IRECT box(left, y, right, y + 76.f);
+  // A layered keybed adds the supports line and the layer mix row; the waveform gives up the room.
+  const keybed::BankSnapshot* bank = mPlugin.Bank();
+  const bool layered = mPlugin.LayerCount() > 1 || (bank && bank->layerCount > 1);
+  const IRECT box(left, y, right, y + (layered ? 52.f : 76.f));
   mWaveformRect = box;
   g.FillRoundRect(PanelDark(), box, 4.f);
   g.DrawRoundRect(FrameSoft(), box, 4.f);
@@ -371,6 +387,7 @@ float KeybedControl::DrawSound(IGraphics& g, float left, float right, float y)
     DrawParamSlider(g, IRECT(left, y, right, y + 24.f), label, param);
     y += 25.f;
   }
+  y = DrawLayerMix(g, left, right, y);
 
   g.DrawText(Label(11.f, TextDim()), "octave", IRECT(left, y, left + 86.f, y + 26.f));
   mOctaveDownRect = IRECT(left + 92.f, y + 2.f, left + 118.f, y + 24.f);
@@ -383,6 +400,36 @@ float KeybedControl::DrawSound(IGraphics& g, float left, float right, float y)
   DrawToggle(g, IRECT(left + 200.f, y, right, y + 26.f), "fill gaps by repitching", mPlugin.GetParam(kParamFillGaps)->Bool(),
              mFillGapsRect);
   return y + 34.f;
+}
+
+float KeybedControl::DrawLayerMix(IGraphics& g, float left, float right, float y)
+{
+  // RC's tri-layer mixer, shown once the kit (or the next build) has support layers.
+  const keybed::BankSnapshot* bank = mPlugin.Bank();
+  const int layers = std::max(mPlugin.LayerCount(), bank ? bank->layerCount : 0);
+  if (layers < 2)
+    return y;
+  static const char* const names[] = {"main", "sup 1", "sup 2"};
+  const float gap = 10.f;
+  const float w = (right - left - gap * 2.f) / 3.f;
+  for (int l = 0; l < layers && l < 3; ++l)
+  {
+    const float x = left + l * (w + gap);
+    const IRECT cell(x, y, x + w, y + 24.f);
+    const IParam* p = mPlugin.GetParam(kParamLayerMain + l);
+    char value[16];
+    std::snprintf(value, sizeof value, "%d%%", (int)std::lround(p->Value()));
+    g.DrawText(Label(10.f, TextDim()), names[l], IRECT(cell.L, cell.T, cell.L + 34.f, cell.B));
+    g.DrawText(Label(10.f, COLOR_WHITE, EAlign::Far), value, IRECT(cell.R - 30.f, cell.T, cell.R, cell.B));
+    const IRECT sr(cell.L + 36.f, cell.MH() - 8.f, cell.R - 34.f, cell.MH() + 8.f);
+    const IRECT track(sr.L, sr.MH() - 2.f, sr.R, sr.MH() + 2.f);
+    g.FillRoundRect(FrameSoft(), track, 2.f);
+    const float filled = sr.L + sr.W() * (float)p->GetNormalized();
+    g.FillRoundRect(Red(), IRECT(track.L, track.T, filled, track.B), 2.f);
+    g.FillCircle(COLOR_WHITE, filled, sr.MH(), 5.f);
+    mParamSliders.push_back({kParamLayerMain + l, sr});
+  }
+  return y + 25.f;
 }
 
 float KeybedControl::DrawKit(IGraphics& g, float left, float right, float y)
@@ -547,8 +594,8 @@ void KeybedControl::OnMouseDown(float x, float y, const IMouseMod& mod)
   }
 
   if (mSettingsRect.Contains(x, y)) { mSettingsOpen = true; SetDirty(false); return; }
-  if (mDiceRect.Contains(x, y)) { mPlugin.RollSound(); SetDirty(false); return; }
-  if (mEditSoundRect.Contains(x, y)) { mSoundOpen = true; SetDirty(false); return; }
+  if (mDiceRect.Contains(x, y)) { mPlugin.RollAll(); SetDirty(false); return; }
+  if (mEditSoundRect.Contains(x, y)) { mPlugin.SetEditLayer(0); mSoundOpen = true; SetDirty(false); return; }
   if (mDescriptorRect.Contains(x, y) && GetUI())
   {
     mEdit = Edit::Descriptor;
@@ -1113,7 +1160,8 @@ void KeybedControl::DrawSoundSheet(IGraphics& g, const IRECT& shell)
   DrawIconButton(g, dice, TransportIcon::Dice);
   mSheetHits.push_back({done, SheetAction::Done, 0});
   mSheetHits.push_back({dice, SheetAction::Dice, 0});
-  y += 38.f;
+  y += 34.f;
+  y = DrawLayerTabs(g, left, right, y);
 
   // instrument: family and type, plus RC's optional second (hybrid) instrument
   y = DrawSectionLabel(g, left, right, y, "instrument", SA3Keybed::kSectionInstrument,
@@ -1169,7 +1217,20 @@ void KeybedControl::DrawSoundSheet(IGraphics& g, const IRECT& shell)
   if (!sound.oscillator.empty()) knobs.push_back({IRECT(), KnobKind::Oscillator, 0});
   y = DrawKnobRow(g, left, right, y, knobs, false) + (knobs.empty() ? 4.f : 0.f);
 
-  // render fx: dry/wet, then one pedal per FX category
+  // render fx: dry/wet, then one pedal per FX category. Every layer renders in main's space.
+  if (mPlugin.EditLayer() > 0)
+  {
+    g.DrawText(Label(11.f, TextDim()), "render fx", IRECT(left, y, left + 160.f, y + 16.f));
+    y += 20.f;
+    const std::string fx = mPlugin.FxLabel();
+    const std::string shared = std::string("shared with main: ") +
+                               (!sound.wet ? "dry" : fx.empty() ? "wet, the model picks the space" : "wet, " + fx);
+    g.DrawText(Label(10.f, TextFaint()), Compact(shared, FitChars(right - left, 5.4f)).c_str(),
+               IRECT(left, y, right, y + 16.f));
+    y += 24.f;
+  }
+  else
+  {
   y = DrawSectionLabel(g, left, right, y, "render fx", SA3Keybed::kSectionFx, nullptr, SheetAction::Done);
   const IRECT dry(left, y, left + 54.f, y + 24.f);
   const IRECT wet(dry.R + 6.f, y, dry.R + 60.f, y + 24.f);
@@ -1197,6 +1258,7 @@ void KeybedControl::DrawSoundSheet(IGraphics& g, const IRECT& shell)
     }
     y += 30.f;
     y = DrawKnobRow(g, left, right, y, knobs, false);
+  }
   }
   y += 2.f;
 
@@ -1232,6 +1294,36 @@ void KeybedControl::DrawSoundSheet(IGraphics& g, const IRECT& shell)
   g.DrawRoundRect(FrameSoft(), preview, 3.f);
   const std::string prompt = kb::sequence_prompt_of(sound, {60, 61}) + ", ...";
   g.DrawMultiLineText(IText(10.f, TextDim(), kFont, EAlign::Near, EVAlign::Top), prompt.c_str(), preview.GetPadded(-6.f));
+}
+
+float KeybedControl::DrawLayerTabs(IGraphics& g, float left, float right, float y)
+{
+  // RC's multi-layered keybeds: a main layer plus up to two supports, each its own full render.
+  const int count = mPlugin.LayerCount();
+  static const char* const names[] = {"main", "support 1", "support 2"};
+  float x = left;
+  for (int l = 0; l < count; ++l)
+  {
+    const IRECT tab(x, y, x + 80.f, y + 24.f);
+    DrawTab(g, tab, names[l], kFont, mPlugin.EditLayer() == l);
+    mSheetHits.push_back({tab, SheetAction::Layer, l});
+    x = tab.R + 6.f;
+  }
+  if (count < kb::kLayerCount)
+  {
+    const IRECT add(x, y, x + 76.f, y + 24.f);
+    g.DrawText(Label(11.f, Red(), EAlign::Center), "+ layer", add);
+    mSheetHits.push_back({add, SheetAction::AddLayer, 0});
+    if (count == 1)
+      g.DrawText(Label(10.f, TextFaint()), "stack support sounds", IRECT(add.R + 4.f, y, right, y + 24.f));
+  }
+  if (mPlugin.EditLayer() > 0)
+  {
+    const IRECT remove(right - 60.f, y, right, y + 24.f);
+    g.DrawText(Label(10.f, TextFaint(), EAlign::Far), "remove", remove);
+    mSheetHits.push_back({remove, SheetAction::RemoveLayer, mPlugin.EditLayer()});
+  }
+  return y + 32.f;
 }
 
 void KeybedControl::OpenListMenu(Popup popup, const std::vector<std::string>& items, const std::string& current,
@@ -1291,6 +1383,9 @@ void KeybedControl::OnSheetMouseDown(float x, float y, const IMouseMod& mod)
     case SheetAction::Done: mSoundOpen = false; return;
     case SheetAction::Dice: mPlugin.RollSound(); return;
     case SheetAction::Lock: mPlugin.SetLocked(hit->index, !mPlugin.Locked(hit->index)); return;
+    case SheetAction::Layer: mPlugin.SetEditLayer(hit->index); return;
+    case SheetAction::AddLayer: mPlugin.AddLayer(); return;
+    case SheetAction::RemoveLayer: mPlugin.RemoveLayer(hit->index); return;
     case SheetAction::Family:
       OpenListMenu(Popup::Family, kb::vocab::all_families(), sound.family, hit->rect, true);
       return;

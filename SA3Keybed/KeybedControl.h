@@ -48,7 +48,7 @@ private:
   enum class SheetAction
   {
     Done, Dice, Lock, Family, Type, AddSecond, Second, RemoveSecond, AddCharacter, RemoveCharacter,
-    Articulation, Oscillator, Dry, Wet, Pedal, AddExtra, EditExtra, RemoveExtra
+    Articulation, Oscillator, Dry, Wet, Pedal, AddExtra, EditExtra, RemoveExtra, Layer, AddLayer, RemoveLayer
   };
   struct SheetHit
   {
@@ -88,6 +88,8 @@ private:
   float DrawKeyboard(IGraphics& g, float left, float right, float y);
   float DrawNoteWaveform(IGraphics& g, float left, float right, float y);
   float DrawSound(IGraphics& g, float left, float right, float y);
+  float DrawLayerMix(IGraphics& g, float left, float right, float y);
+  float DrawLayerTabs(IGraphics& g, float left, float right, float y);
   float DrawKit(IGraphics& g, float left, float right, float y);
 
   void DrawSlider(IGraphics& g, const IRECT& bounds, const char* label, const char* valueText, float fraction,

@@ -4,7 +4,7 @@
 // Usage: SA3KeybedEngineTest MODELS_DIR [STEPS] [ENCODING]
 // Renders a six-note sine preview, plays every key through the sampler at a 48 kHz host rate, and
 // checks each output's pitch against its MIDI key (Goertzel energy at f vs f/2, 2f, and +-1 semitone).
-// Then checks gap filling, the octave parameter, kit reload from disk, and cancel.
+// Then checks gap filling, the octave parameter, kit reload from disk, a three-layer keybed, and cancel.
 #include "KeybedKit.h"
 #include "KeybedRenderService.h"
 #include "KeybedSampler.h"
@@ -146,7 +146,7 @@ int main(int argc, char** argv)
   KeybedJob job;
   job.modelsDir = modelsDir;
   job.encoding = encoding;
-  job.descriptor = "Pure Tone, Sine, Clean";
+  job.layers = {"Pure Tone, Sine, Clean"};
   job.chunks = kb::plan_preview(72, 6);
   job.rangeLabel = "engine test";
   job.seed = 7;
@@ -202,7 +202,7 @@ int main(int argc, char** argv)
     KitManifest manifest;
     std::string loadError;
     const auto loaded = LoadKitSamples(kitDir, manifest, loadError);
-    Check(loaded.size() == 6 && manifest.complete && manifest.seed == 7 && manifest.descriptor == job.descriptor,
+    Check(loaded.size() == 6 && manifest.complete && manifest.seed == 7 && manifest.descriptor == job.layers[0],
           "kit.json + WAVs reload (" + std::to_string(loaded.size()) + " notes)" + (loadError.empty() ? "" : ": " + loadError));
     bool identical = loaded.size() == notes.size();
     for (size_t i = 0; identical && i < loaded.size(); ++i)
@@ -210,7 +210,57 @@ int main(int argc, char** argv)
     Check(identical, "reloaded float WAVs are bit-identical");
   }
 
-  std::printf("5. cancel a full build after its first chunk\n");
+  std::printf("5. a three-layer keybed (RC's Main + Supports): per-layer seeds, folders, and mix\n");
+  {
+    KeybedJob layered = job;
+    layered.layers = {"Pure Tone, Sine, Clean", "Pure Tone, Sine, Warm", "Pure Tone, Sine, Bright"};
+    layered.seed = 7;
+    Check(service.Start(layered, error), "layered render starts" + (error.empty() ? std::string() : ": " + error));
+    std::vector<NoteSamplePtr> layerNotes;
+    ends = WaitForEnd(service, 300.0, &layerNotes);
+    Check(!ends.empty() && ends.back().kind == KeybedEvent::Kind::Finished,
+          "layered render finished: " + (ends.empty() ? std::string("timeout") : ends.back().message));
+    service.Collect(true);
+    bool mainFirst = layerNotes.size() == 18;
+    for (size_t i = 0; mainFirst && i < layerNotes.size(); ++i)
+      mainFirst = layerNotes[i]->layer == (int)(i / 6);
+    Check(mainFirst, "18 notes arrived layer by layer, main first");
+
+    const std::string layeredDir = ends.empty() ? std::string() : ends.back().kitDir;
+    KitManifest manifest;
+    std::string loadError;
+    const auto loaded = LoadKitSamples(layeredDir, manifest, loadError);
+    bool seeds = manifest.seed == 7 && manifest.layerSeeds.size() == 3 && manifest.layerDescriptors.size() == 3;
+    for (int l = 0; seeds && l < 3; ++l)
+      seeds = manifest.layerSeeds[(size_t)l] == kb::layer_seed(7, l);
+    Check(seeds, "top-level kit.json: base seed 7 and RC's SHA-1 layer seeds");
+    int perLayer[3] = {0, 0, 0};
+    for (const auto& note : loaded)
+      if (note->layer >= 0 && note->layer < 3)
+        ++perLayer[note->layer];
+    Check(loaded.size() == 18 && perLayer[0] == 6 && perLayer[1] == 6 && perLayer[2] == 6,
+          "layer folders reload with their layer tags (" + std::to_string(loaded.size()) + " notes)" +
+            (loadError.empty() ? "" : ": " + loadError));
+
+    KeybedBank layeredBank;
+    layeredBank.Publish(loaded, true);
+    Check(layeredBank.Latest() && layeredBank.Latest()->layerCount == 3, "bank sees three layers");
+    auto out = Play(engine, layeredBank, 60, 1.0, hostRate);
+    Check(DominantKey(out, hostRate, 60) == 60 && Rms(out) > 1e-3, "layered C4 sounds C4");
+    const double full = Rms(out);
+    engine.settings.layerVolume[0].store(0.0);
+    out = Play(engine, layeredBank, 60, 1.0, hostRate);
+    Check(Rms(out) > 1e-4 && Rms(out) < full, "main muted: the supports still sound, quieter");
+    for (auto& v : engine.settings.layerVolume)
+      v.store(0.0);
+    out = Play(engine, layeredBank, 60, 0.5, hostRate);
+    Check(Rms(out) < 1e-6, "every layer muted: silence");
+    engine.settings.layerVolume[0].store(0.90);
+    engine.settings.layerVolume[1].store(0.60);
+    engine.settings.layerVolume[2].store(0.35);
+  }
+
+  std::printf("6. cancel a full build after its first chunk\n");
   {
     job.chunks = kb::plan_full_range(kb::FullRange::C2ToB5);
     job.seed = -1;

@@ -25,6 +25,18 @@ per key, the raw chunks, `kit.json`, and a `kit.sfz` for other samplers. The plu
 kit folder and reloads it in the background with the project. Drag the note waveform out to export
 that key's WAV, or drag the kit name to export the whole kit folder.
 
+### Layered keybeds
+
+RoyalCities' multi-layered keybeds stack up to three independently rendered keyboards: a Main layer
+and two Supports. In the sound sheet (`edit`), `+ layer` adds a Support tab with its own sound;
+range, steps, CFG, and render fx are shared. A build renders layer by layer, Main first, so the main
+keyboard is playable after a third of the time. Each layer's seed comes from the base seed exactly as
+RC derives it (`sa3::sat::keybed::layer_seed`), so a layered kit is reproducible from one number.
+The layers mix only at playback, with a volume per layer (host parameters, defaulting to RC's
+90 / 60 / 35 %) that appears under the playback sliders once a kit has layers. A layered kit keeps
+each layer in `layer_1_main`, `layer_2_support`, and `layer_3_support`, and its top-level `kit.sfz`
+plays them together at the same mix.
+
 Formats: VST3, CLAP, and a standalone app.
 
 ## Build (Windows)
@@ -60,7 +72,7 @@ or convert the DiT yourself with `sa3.cpp/tools/convert_sat_dit.py` (see
 
 - `build/out-test/Release/SA3KeybedEngineTest.exe <models dir> [steps]` renders a sine preview
   through libsa3, plays every key through the sampler at 48 kHz and checks its pitch, then checks gap
-  filling, octave shift, kit reload, and cancel.
+  filling, octave shift, kit reload, a three-layer keybed (seeds, folders, mix), and cancel.
 - VST3 validator: 47 passed, 0 failed.
 
 The Foundation-1.2 weights are under the Stability AI Community License.

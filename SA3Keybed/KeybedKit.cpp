@@ -242,7 +242,7 @@ std::string CreateKitDirectory(const std::string& descriptor, uint64_t seed)
   std::error_code ec;
   for (int n = 2; fs::exists(dir, ec); ++n)
     dir = PathFromUtf8(kits) / (std::string(stamp) + "-" + slug + std::to_string(seed) + "-" + std::to_string(n));
-  fs::create_directories(dir / "chunks", ec);
+  fs::create_directories(dir, ec);   // the render adds chunks/ beside the WAVs it writes
   return ec ? std::string() : Utf8FromPath(dir);
 }
 
@@ -337,7 +337,7 @@ bool WriteNoteWav(const std::string& path, const NoteSample& note, std::string& 
   return WritePlanarWav(path, planar.data(), 2, note.frames, note.sampleRate, error);
 }
 
-NoteSamplePtr ReadNoteWav(const std::string& path, int midi, std::string& error)
+NoteSamplePtr ReadNoteWav(const std::string& path, int midi, std::string& error, int layer)
 {
   std::ifstream in(PathFromUtf8(path), std::ios::binary);
   if (!in)
@@ -382,6 +382,7 @@ NoteSamplePtr ReadNoteWav(const std::string& path, int midi, std::string& error)
   const int frames = (int)(dataSize / (sampleBytes * channels));
   auto note = std::make_shared<NoteSample>();
   note->midi = midi;
+  note->layer = layer;
   note->sampleRate = (int)rate;
   note->frames = frames;
   note->left.resize((size_t)frames);
@@ -416,10 +417,17 @@ bool WriteKitManifest(const std::string& kitDir, const KitManifest& m, std::stri
     error = "cannot write kit.json in " + kitDir;
     return false;
   }
-  std::string fx = "[";
-  for (size_t i = 0; i < m.fx.size(); ++i)
-    fx += (i ? ", \"" : "\"") + JsonEscape(m.fx[i]) + "\"";
-  fx += "]";
+  const auto stringArray = [](const std::vector<std::string>& items) {
+    std::string out = "[";
+    for (size_t i = 0; i < items.size(); ++i)
+      out += (i ? ", \"" : "\"") + JsonEscape(items[i]) + "\"";
+    return out + "]";
+  };
+  const std::string fx = stringArray(m.fx);
+  std::string layerSeeds = "[";
+  for (size_t i = 0; i < m.layerSeeds.size(); ++i)
+    layerSeeds += (i ? ", " : "") + std::to_string(m.layerSeeds[i]);
+  layerSeeds += "]";
   char numbers[256];
   std::snprintf(numbers, sizeof numbers,
                 "  \"seed\": %llu,\n  \"steps\": %d,\n  \"cfg_scale\": %.4g,\n  \"sigma_min\": %.4g,\n  \"sigma_max\": %.4g,\n",
@@ -435,6 +443,8 @@ bool WriteKitManifest(const std::string& kitDir, const KitManifest& m, std::stri
       << "  \"range\": \"" << JsonEscape(m.range) << "\",\n"
       << "  \"label_midis\": " << JoinInts(m.labelMidis) << ",\n"
       << "  \"sounding_midis\": " << JoinInts(m.soundingMidis) << ",\n"
+      << "  \"layer_descriptors\": " << stringArray(m.layerDescriptors) << ",\n"
+      << "  \"layer_seeds\": " << layerSeeds << ",\n"
       << "  \"pitch_note\": \"samples are keyed by sounding pitch; Foundation-1.2 renders one octave below its prompt labels\",\n"
       << "  \"complete\": " << (m.complete ? "true" : "false") << "\n"
       << "}\n";
@@ -478,6 +488,12 @@ bool ReadKitManifest(const std::string& kitDir, KitManifest& m, std::string& err
   for (const auto& item : JsonArrayItems(get("sounding_midis")))
     m.soundingMidis.push_back(std::atoi(item.c_str()));
   m.complete = get("complete") == "true";
+  m.layerDescriptors.clear();
+  for (const auto& item : JsonArrayItems(get("layer_descriptors")))
+    m.layerDescriptors.push_back(JsonString(item));
+  m.layerSeeds.clear();
+  for (const auto& item : JsonArrayItems(get("layer_seeds")))
+    m.layerSeeds.push_back(std::strtoull(item.c_str(), nullptr, 10));
   return true;
 }
 
@@ -497,28 +513,82 @@ bool WriteKitSfz(const std::string& kitDir, const std::vector<int>& soundingMidi
   return true;
 }
 
-std::vector<NoteSamplePtr> LoadKitSamples(const std::string& kitDir, KitManifest& manifest, std::string& error)
+bool WriteLayeredKitSfz(const std::string& kitDir, const std::vector<std::vector<int>>& layerMidis,
+                        std::string& error)
+{
+  std::string text = "// Auto-generated Foundation-1.2 layered keybed export (sa3.cpp)\n";
+  char line[200];
+  for (size_t l = 0; l < layerMidis.size() && l < (size_t)kb::kLayerCount; ++l)
+  {
+    const double db = 20.0 * std::log10((double)kb::kLayerDefaultVolumes[l]);
+    std::snprintf(line, sizeof line,
+                  "\n// %s\n<group> volume=%.2f ampeg_attack=0.0050 ampeg_decay=0.0000 ampeg_sustain=100 ampeg_release=0.2500\n",
+                  kb::kLayerRoles[l], db);
+    text += line;
+    std::vector<int> midis = layerMidis[l];
+    std::sort(midis.begin(), midis.end());
+    for (int midi : midis)
+    {
+      std::snprintf(line, sizeof line, "<region> sample=%s/%s lokey=%d hikey=%d pitch_keycenter=%d\n",
+                    kb::kLayerDirNames[l], NoteFileName(midi).c_str(), midi, midi, midi);
+      text += line;
+    }
+  }
+  std::ofstream out(PathFromUtf8(kitDir) / "kit.sfz", std::ios::binary | std::ios::trunc);
+  out << text;
+  if (!out)
+  {
+    error = "cannot write kit.sfz in " + kitDir;
+    return false;
+  }
+  return true;
+}
+
+namespace
+{
+std::vector<NoteSamplePtr> LoadLayerSamples(const std::string& dir, int layer, KitManifest& manifest,
+                                            std::string& error)
 {
   std::vector<NoteSamplePtr> notes;
   std::string manifestError;
   std::vector<int> keys;
-  if (ReadKitManifest(kitDir, manifest, manifestError) && !manifest.soundingMidis.empty())
+  if (ReadKitManifest(dir, manifest, manifestError) && !manifest.soundingMidis.empty())
     keys = manifest.soundingMidis;
   else
     for (int midi = 0; midi < 128; ++midi)
       keys.push_back(midi);
   for (int midi : keys)
   {
-    const fs::path path = PathFromUtf8(kitDir) / PathFromUtf8(NoteFileName(midi));
+    const fs::path path = PathFromUtf8(dir) / PathFromUtf8(NoteFileName(midi));
     std::error_code ec;
     if (!fs::is_regular_file(path, ec))
       continue;
     std::string noteError;
-    if (auto note = ReadNoteWav(Utf8FromPath(path), midi, noteError))
+    if (auto note = ReadNoteWav(Utf8FromPath(path), midi, noteError, layer))
       notes.push_back(std::move(note));
     else
       error = noteError;
   }
+  return notes;
+}
+} // namespace
+
+std::vector<NoteSamplePtr> LoadKitSamples(const std::string& kitDir, KitManifest& manifest, std::string& error)
+{
+  std::vector<NoteSamplePtr> notes;
+  std::string manifestError;
+  if (ReadKitManifest(kitDir, manifest, manifestError) && manifest.layerDescriptors.size() > 1)
+  {
+    for (size_t l = 0; l < manifest.layerDescriptors.size() && l < (size_t)kb::kLayerCount; ++l)
+    {
+      KitManifest layerManifest;
+      auto layerNotes = LoadLayerSamples(Utf8FromPath(PathFromUtf8(kitDir) / kb::kLayerDirNames[l]), (int)l,
+                                         layerManifest, error);
+      notes.insert(notes.end(), layerNotes.begin(), layerNotes.end());
+    }
+  }
+  else
+    notes = LoadLayerSamples(kitDir, 0, manifest, error);
   if (notes.empty() && error.empty())
     error = "no note samples in " + kitDir;
   return notes;

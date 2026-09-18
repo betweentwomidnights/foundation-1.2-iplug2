@@ -20,12 +20,14 @@ struct KeybedJob
   std::string modelsDir;
   std::string variant = "foundation-1.2-keybeds";
   std::string encoding = "F16";
-  std::string descriptor;
+  // One descriptor per layer: Main, then up to two Supports (RC's layered keybed). The range,
+  // sampler, and render fx (wet + fx tags) are shared by every layer.
+  std::vector<std::string> layers;
   bool wet = false;
   std::vector<std::string> fx;
   std::vector<sa3::sat::keybed::Chunk> chunks;
   std::string rangeLabel;
-  int64_t seed = -1;   // -1: pick once, then reuse for every chunk
+  int64_t seed = -1;   // base seed; -1 picks one. Layered jobs derive one seed per layer from it.
   int steps = 80;
   float cfgScale = 6.f;
   bool keepResident = true;

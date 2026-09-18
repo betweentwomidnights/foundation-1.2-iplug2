@@ -25,7 +25,7 @@ namespace kb = sa3::sat::keybed;
 namespace
 {
 constexpr uint32_t kStateMagic = 0x53334B42u;   // "S3KB"
-constexpr uint32_t kStateVersion = 3u;   // 3: structured sound + locks; 2: FX tag list; 1: FX index
+constexpr uint32_t kStateVersion = 4u;   // 4: layers; 3: structured sound + locks; 2: FX tag list; 1: FX index
 constexpr const char* kVariant = "foundation-1.2-keybeds";
 
 const char* RangeLabel(SA3Keybed::RangeChoice range)
@@ -52,6 +52,11 @@ SA3Keybed::SA3Keybed(const InstanceInfo& info)
   GetParam(kParamTune)->InitDouble("Tune", 0., -12., 12., 0.01, "st");
   GetParam(kParamOctave)->InitInt("Octave", 0, -2, 2);
   GetParam(kParamFillGaps)->InitBool("Fill Gaps", true);
+  // RC's tri-layer mixer; only heard when the kit has support layers.
+  static const char* const layerNames[kb::kLayerCount] = {"Main Layer", "Support 1", "Support 2"};
+  for (int l = 0; l < kb::kLayerCount; ++l)
+    GetParam(kParamLayerMain + l)->InitDouble(layerNames[l], kb::kLayerDefaultVolumes[l] * 100., 0., 100., 0.1, "%",
+                                              IParam::kFlagsNone, "Layers");
 
   LoadGlobalSettings();
 
@@ -124,6 +129,9 @@ void SA3Keybed::OnParamChange(int paramIdx)
     case kParamTune: s.tuneSemitones.store(value); break;
     case kParamOctave: s.octave.store(GetParam(paramIdx)->Int()); break;
     case kParamFillGaps: s.fillGaps.store(GetParam(paramIdx)->Bool()); break;
+    case kParamLayerMain:
+    case kParamLayerSupport1:
+    case kParamLayerSupport2: s.layerVolume[(size_t)(paramIdx - kParamLayerMain)].store(value / 100.); break;
     default: break;
   }
 }
@@ -187,13 +195,86 @@ void SA3Keybed::OnIdle()
 #endif
 }
 
+kb::SoundSpec SA3Keybed::Sound() const
+{
+  kb::SoundSpec sound = mLayers[(size_t)mEditLayer];
+  sound.wet = mLayers[0].wet;   // render fx is shared: every layer shows main's
+  sound.fx = mLayers[0].fx;
+  return sound;
+}
+
+void SA3Keybed::SetSound(kb::SoundSpec sound)
+{
+  const int layer = std::clamp(mEditLayer, 0, mLayerCount - 1);
+  mLayers[0].wet = sound.wet;
+  mLayers[0].fx = sound.fx;
+  mLayers[(size_t)layer] = std::move(sound);
+  for (int l = 1; l < mLayerCount; ++l)
+  {
+    mLayers[(size_t)l].wet = mLayers[0].wet;
+    mLayers[(size_t)l].fx = mLayers[0].fx;
+  }
+}
+
+void SA3Keybed::AddLayer()
+{
+  if (mLayerCount >= kb::kLayerCount)
+    return;
+  // RC seeds each layer's dice from one base (tri_prompt_n); here the base is fresh each time.
+  std::random_device device;
+  const uint64_t base = ((uint64_t)device() << 32) ^ device();
+  const int layer = mLayerCount++;
+  kb::SoundSpec rolled = kb::random_sound(kb::layer_prompt_seed(base, layer), mLayers[0].wet);
+  rolled.wet = mLayers[0].wet;
+  rolled.fx = mLayers[0].fx;
+  mLayers[(size_t)layer] = std::move(rolled);
+  mEditLayer = layer;
+}
+
+void SA3Keybed::RemoveLayer(int layer)
+{
+  if (layer < 1 || layer >= mLayerCount)
+    return;
+  for (int l = layer; l + 1 < mLayerCount; ++l)
+    mLayers[(size_t)l] = mLayers[(size_t)l + 1];
+  --mLayerCount;
+  mLayers[(size_t)mLayerCount] = kb::SoundSpec();
+  mEditLayer = std::min(mEditLayer, mLayerCount - 1);
+}
+
+std::string SA3Keybed::LayerSummary() const
+{
+  // Short enough for one line with both supports: "support 1: Pad, Rich  ·  support 2: Cello, Warm".
+  std::string summary;
+  for (int l = 1; l < mLayerCount; ++l)
+  {
+    const kb::SoundSpec& sound = mLayers[(size_t)l];
+    std::string name = !sound.subfamily.empty() ? sound.subfamily : sound.family;
+    if (!sound.character.empty())
+      name += (name.empty() ? "" : ", ") + sound.character.front();
+    if (name.empty())
+      name = kb::descriptor_of(sound);
+    summary += (summary.empty() ? "" : "  ·  ") + std::string(kb::kLayerRoles[l]) + ": " + name;
+  }
+  return summary;
+}
+
 std::string SA3Keybed::Descriptor() const
 {
-  return kb::descriptor_of(mSound);
+  return kb::descriptor_of(mLayers[0]);
+}
+
+std::string SA3Keybed::DescriptorBundle() const
+{
+  std::string bundle;
+  for (int l = 0; l < mLayerCount; ++l)
+    bundle += (l ? " || " : "") + kb::descriptor_of(mLayers[(size_t)l]);
+  return bundle;
 }
 
 void SA3Keybed::SetDescriptor(const std::string& text)
 {
+  // The main page's text field names the main layer.
   kb::SoundSpec sorted = kb::classify_descriptor(text);
   // Text that says nothing about the space keeps the current render fx.
   bool mentionsSpace = !kb::split_descriptor_tokens(text).fx.empty();
@@ -204,40 +285,64 @@ void SA3Keybed::SetDescriptor(const std::string& text)
   }
   if (!mentionsSpace)
   {
-    sorted.wet = mSound.wet;
-    sorted.fx = mSound.fx;
+    sorted.wet = mLayers[0].wet;
+    sorted.fx = mLayers[0].fx;
   }
-  mSound = std::move(sorted);
+  const int editing = mEditLayer;
+  mEditLayer = 0;
+  SetSound(std::move(sorted));
+  mEditLayer = editing;
 }
 
 std::string SA3Keybed::FxLabel() const
 {
   std::string label;
-  for (const auto& tag : mSound.fx)
+  for (const auto& tag : mLayers[0].fx)
     label += (label.empty() ? "" : " + ") + tag;
   return label;
+}
+
+void SA3Keybed::ApplyRoll(int layer, const kb::SoundSpec& rolled)
+{
+  kb::SoundSpec& sound = mLayers[(size_t)layer];
+  if (!mLocks[kSectionInstrument])
+  {
+    sound.family = rolled.family;
+    sound.subfamily = rolled.subfamily;
+    sound.second_instrument.clear();
+  }
+  if (!mLocks[kSectionCharacter])
+    sound.character = rolled.character;
+  if (!mLocks[kSectionShape])
+  {
+    sound.articulation = rolled.articulation;
+    sound.oscillator = rolled.oscillator;
+  }
+  if (layer == 0 && !mLocks[kSectionFx] && mLayers[0].wet)
+    mLayers[0].fx = rolled.fx;   // RC's one-or-two-tag chains, shared by every layer
+  sound.wet = mLayers[0].wet;
+  sound.fx = mLayers[0].fx;
 }
 
 void SA3Keybed::RollSound()
 {
   std::random_device device;
   const uint64_t seed = ((uint64_t)device() << 32) ^ device();
-  const kb::SoundSpec rolled = kb::random_sound(seed, mSound.wet);
-  if (!mLocks[kSectionInstrument])
-  {
-    mSound.family = rolled.family;
-    mSound.subfamily = rolled.subfamily;
-    mSound.second_instrument.clear();
-  }
-  if (!mLocks[kSectionCharacter])
-    mSound.character = rolled.character;
-  if (!mLocks[kSectionShape])
-  {
-    mSound.articulation = rolled.articulation;
-    mSound.oscillator = rolled.oscillator;
-  }
-  if (!mLocks[kSectionFx] && mSound.wet)
-    mSound.fx = rolled.fx;   // RC's one-or-two-tag chains
+  ApplyRoll(mEditLayer, kb::random_sound(seed, mLayers[0].wet));
+  if (mEditLayer == 0)
+    for (int l = 1; l < mLayerCount; ++l)
+      mLayers[(size_t)l].fx = mLayers[0].fx;
+}
+
+void SA3Keybed::RollAll()
+{
+  // RC's randomize_all_tri_layers: one base, and each layer rolls from its tri_prompt_n seed.
+  std::random_device device;
+  const uint64_t base = ((uint64_t)device() << 32) ^ device();
+  for (int l = 0; l < mLayerCount; ++l)
+    ApplyRoll(l, kb::random_sound(mLayerCount > 1 ? kb::layer_prompt_seed(base, l) : base, mLayers[0].wet));
+  for (int l = 1; l < mLayerCount; ++l)
+    mLayers[(size_t)l].fx = mLayers[0].fx;
 }
 
 void SA3Keybed::SetSteps(int steps)
@@ -336,9 +441,10 @@ bool SA3Keybed::StartJob(std::vector<kb::Chunk> chunks, std::string rangeLabel, 
   job.modelsDir = mModelsDir;
   job.variant = kVariant;
   job.encoding = mEncoding;
-  job.descriptor = kb::descriptor_of(mSound);
-  job.wet = mSound.wet;
-  job.fx = kb::fx_of(mSound);
+  for (int l = 0; l < mLayerCount; ++l)
+    job.layers.push_back(kb::descriptor_of(mLayers[(size_t)l]));
+  job.wet = mLayers[0].wet;
+  job.fx = kb::fx_of(mLayers[0]);
   job.chunks = std::move(chunks);
   job.rangeLabel = std::move(rangeLabel);
   job.steps = mSteps;
@@ -347,7 +453,7 @@ bool SA3Keybed::StartJob(std::vector<kb::Chunk> chunks, std::string rangeLabel, 
   // RoyalCities' flow: a full build after a preview of the same descriptor keeps the preview's seed.
   if (mUseSeed)
     job.seed = mSeed;
-  else if (!preview && mHasLastSeed && mLastSeedDescriptor == Descriptor())
+  else if (!preview && mHasLastSeed && mLastSeedDescriptor == DescriptorBundle())
     job.seed = (int64_t)(mLastSeed & 0x7fffffffffffffffull);
   else
     job.seed = -1;
@@ -358,7 +464,7 @@ bool SA3Keybed::StartJob(std::vector<kb::Chunk> chunks, std::string rangeLabel, 
     SetStatus(error, true);
     return false;
   }
-  mJobDescriptor = Descriptor();
+  mJobDescriptor = DescriptorBundle();
   mReplaceBankOnNextNote = true;
   {
     std::lock_guard<std::mutex> lock(mKitLoadMutex);   // a render supersedes a kit still loading
@@ -461,17 +567,25 @@ void SA3Keybed::InstallLoadedKit()
   mManifest = kit.manifest;
   if (kit.adoptSettings && !kit.manifest.descriptor.empty())
   {
-    mSound = kb::classify_descriptor(kit.manifest.descriptor);
-    mSound.wet = kit.manifest.wet;
-    mSound.fx.clear();
-    for (const auto& tag : kit.manifest.fx)
-      kb::set_fx(mSound, tag);
+    std::vector<std::string> descriptors = kit.manifest.layerDescriptors;
+    if (descriptors.size() < 2)
+      descriptors = {kit.manifest.descriptor};
+    mLayerCount = std::min((int)descriptors.size(), kb::kLayerCount);
+    mEditLayer = 0;
+    for (int l = 0; l < kb::kLayerCount; ++l)
+    {
+      mLayers[(size_t)l] = l < mLayerCount ? kb::classify_descriptor(descriptors[(size_t)l]) : kb::SoundSpec();
+      mLayers[(size_t)l].wet = kit.manifest.wet;
+      mLayers[(size_t)l].fx.clear();
+      for (const auto& tag : kit.manifest.fx)
+        kb::set_fx(mLayers[(size_t)l], tag);
+    }
   }
   if (kit.adoptSettings && kit.manifest.seed)
   {
-    mLastSeed = kit.manifest.seed;
+    mLastSeed = kit.manifest.seed;   // a layered kit's top-level seed is the base seed
     mHasLastSeed = true;
-    mLastSeedDescriptor = Descriptor();
+    mLastSeedDescriptor = DescriptorBundle();
   }
   SetStatus("loaded " + std::to_string(kit.notes.size()) + " notes" + (kit.error.empty() ? "" : " (" + kit.error + ")"),
             !kit.error.empty());
@@ -479,10 +593,16 @@ void SA3Keybed::InstallLoadedKit()
 
 std::string SA3Keybed::NoteFilePath(int key) const
 {
-  if (mKitDir.empty() || key < 0 || key > 127 || !SampleForKey(key))
+  const keybed::NoteSamplePtr note = key >= 0 && key <= 127 ? SampleForKey(key) : nullptr;
+  if (mKitDir.empty() || !note)
     return {};
-  const std::filesystem::path path = std::filesystem::u8path(mKitDir) / keybed::NoteFileName(key);
+  std::filesystem::path path = std::filesystem::u8path(mKitDir);
   std::error_code ec;
+  // A layered kit keeps each layer's WAVs in its own folder.
+  const std::filesystem::path layerDir = path / kb::kLayerDirNames[std::clamp(note->layer, 0, kb::kLayerCount - 1)];
+  if (std::filesystem::is_directory(layerDir, ec))
+    path = layerDir;
+  path /= keybed::NoteFileName(key);
   return std::filesystem::is_regular_file(path, ec) ? path.u8string() : std::string();
 }
 
@@ -508,16 +628,22 @@ bool SA3Keybed::SerializeState(IByteChunk& chunk) const
     for (const auto& item : items)
       chunk.PutStr(item.c_str());
   };
-  chunk.PutStr(mSound.family.c_str());
-  chunk.PutStr(mSound.subfamily.c_str());
-  chunk.PutStr(mSound.second_instrument.c_str());
-  putList(mSound.character);
-  chunk.PutStr(mSound.articulation.c_str());
-  chunk.PutStr(mSound.oscillator.c_str());
-  putList(mSound.extras);
-  const int32_t wet = mSound.wet ? 1 : 0;
+  const int32_t layerCount = mLayerCount;
+  chunk.Put(&layerCount);
+  for (int l = 0; l < mLayerCount; ++l)
+  {
+    const kb::SoundSpec& sound = mLayers[(size_t)l];
+    chunk.PutStr(sound.family.c_str());
+    chunk.PutStr(sound.subfamily.c_str());
+    chunk.PutStr(sound.second_instrument.c_str());
+    putList(sound.character);
+    chunk.PutStr(sound.articulation.c_str());
+    chunk.PutStr(sound.oscillator.c_str());
+    putList(sound.extras);
+  }
+  const int32_t wet = mLayers[0].wet ? 1 : 0;
   chunk.Put(&wet);
-  putList(mSound.fx);
+  putList(mLayers[0].fx);
   int32_t locks = 0;
   for (int i = 0; i < kNumSections; ++i)
     locks |= mLocks[(size_t)i] ? (1 << i) : 0;
@@ -565,23 +691,35 @@ int SA3Keybed::UnserializeState(const IByteChunk& chunk, int startPos)
       out.emplace_back(text.Get());
     }
   };
-  kb::SoundSpec sound;
+  std::array<kb::SoundSpec, kb::kLayerCount> layers;
+  int32_t layerCount = 1;
+  kb::SoundSpec& sound = layers[0];
   int32_t locks = 0;
   if (version >= 3u)
   {
-    getString(sound.family);
-    getString(sound.subfamily);
-    getString(sound.second_instrument);
-    getList(sound.character);
-    getString(sound.articulation);
-    getString(sound.oscillator);
-    getList(sound.extras);
+    if (version >= 4u)
+      pos = chunk.Get(&layerCount, pos);
+    layerCount = std::clamp<int32_t>(layerCount, 1, kb::kLayerCount);
+    for (int32_t l = 0; l < layerCount; ++l)
+    {
+      kb::SoundSpec& layer = layers[(size_t)l];
+      getString(layer.family);
+      getString(layer.subfamily);
+      getString(layer.second_instrument);
+      getList(layer.character);
+      getString(layer.articulation);
+      getString(layer.oscillator);
+      getList(layer.extras);
+    }
     pos = chunk.Get(&wet, pos);
-    sound.wet = wet != 0;
     std::vector<std::string> fxTags;
     getList(fxTags);
-    for (const auto& tag : fxTags)
-      kb::set_fx(sound, tag);
+    for (int32_t l = 0; l < layerCount; ++l)
+    {
+      layers[(size_t)l].wet = wet != 0;
+      for (const auto& tag : fxTags)
+        kb::set_fx(layers[(size_t)l], tag);
+    }
     pos = chunk.Get(&locks, pos);
   }
   else
@@ -622,7 +760,9 @@ int SA3Keybed::UnserializeState(const IByteChunk& chunk, int startPos)
   if (pos < 0)
     return pos;
 
-  mSound = std::move(sound);
+  mLayers = std::move(layers);
+  mLayerCount = layerCount;
+  mEditLayer = 0;
   for (int i = 0; i < kNumSections; ++i)
     mLocks[(size_t)i] = (locks >> i) & 1;
   SetSteps(steps);

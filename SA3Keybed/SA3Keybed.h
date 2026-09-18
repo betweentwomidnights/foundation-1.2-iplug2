@@ -6,6 +6,7 @@
 #include "KeybedRenderService.h"
 #include "KeybedSampler.h"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -27,6 +28,9 @@ enum EParams
   kParamTune,
   kParamOctave,
   kParamFillGaps,
+  kParamLayerMain,       // layered keybeds: per-layer volume (RC's tri-layer mixer)
+  kParamLayerSupport1,
+  kParamLayerSupport2,
   kNumParams
 };
 
@@ -54,22 +58,33 @@ public:
   // The sound is structured (sa3::sat::keybed::SoundSpec): the sound sheet edits its parts, and
   // typed text is sorted onto them. The descriptor string is always derived from it.
   enum Section { kSectionInstrument = 0, kSectionCharacter, kSectionShape, kSectionFx, kNumSections };
-  const sa3::sat::keybed::SoundSpec& Sound() const { return mSound; }
-  void SetSound(sa3::sat::keybed::SoundSpec sound) { mSound = std::move(sound); }
-  std::string Descriptor() const;
+  // Layered keybeds (RC's Main + up to two Supports): Sound()/SetSound() act on the layer open in
+  // the sound sheet. Render fx is shared by every layer, so it always reads from and writes to main.
+  sa3::sat::keybed::SoundSpec Sound() const;
+  void SetSound(sa3::sat::keybed::SoundSpec sound);
+  const sa3::sat::keybed::SoundSpec& Layer(int layer) const { return mLayers[(size_t)std::clamp(layer, 0, mLayerCount - 1)]; }
+  int LayerCount() const { return mLayerCount; }
+  int EditLayer() const { return mEditLayer; }
+  void SetEditLayer(int layer) { mEditLayer = std::clamp(layer, 0, mLayerCount - 1); }
+  void AddLayer();                 // a new support layer with a rolled sound
+  void RemoveLayer(int layer);     // supports only
+  std::string LayerSummary() const;   // the supports' descriptors, for the main page
+  std::string Descriptor() const;     // main layer
   // Typed or pasted text: sorted onto the controls. Text with no FX or wet/dry words keeps the
   // current render fx.
   void SetDescriptor(const std::string& text);
-  // Dice: a new RC-weighted sound; locked sections are kept.
+  // Dice: a new RC-weighted sound for the layer in the sheet; locked sections are kept.
   void RollSound();
+  // Main-page dice: every layer, from one base seed (RC's randomize_all_tri_layers).
+  void RollAll();
   bool Locked(int section) const { return section >= 0 && section < kNumSections && mLocks[(size_t)section]; }
   void SetLocked(int section, bool locked) { if (section >= 0 && section < kNumSections) mLocks[(size_t)section] = locked; }
-  bool Wet() const { return mSound.wet; }
+  bool Wet() const { return mLayers[0].wet; }
   // Turning wet on with no tag chosen picks the model's most common space, so "wet" always
   // names a sound; the tag can still be cleared to let the model decide.
   void SetWet(bool wet);
   // FX tags a wet prompt carries, one per category; empty lets the model choose the space.
-  const std::vector<std::string>& FxTags() const { return mSound.fx; }
+  const std::vector<std::string>& FxTags() const { return mLayers[0].fx; }
   std::string FxLabel() const;
   int Steps() const { return mSteps; }
   void SetSteps(int steps);
@@ -133,7 +148,12 @@ private:
   keybed::KeybedRenderService mRender;
 
   // generation settings (UI thread; persisted in the state chunk)
-  sa3::sat::keybed::SoundSpec mSound = sa3::sat::keybed::classify_descriptor("Keys, Rhodes Piano, Warm, Soft");
+  std::array<sa3::sat::keybed::SoundSpec, 3> mLayers{
+    sa3::sat::keybed::classify_descriptor("Keys, Rhodes Piano, Warm, Soft")};
+  int mLayerCount = 1;
+  int mEditLayer = 0;
+  void ApplyRoll(int layer, const sa3::sat::keybed::SoundSpec& rolled);
+  std::string DescriptorBundle() const;   // RC's _descriptor_bundle: every layer's descriptor
   std::array<bool, kNumSections> mLocks{};
   int mSteps = 80;
   float mCfgScale = 6.f;

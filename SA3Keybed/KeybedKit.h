@@ -13,6 +13,7 @@ namespace keybed
 struct NoteSample
 {
   int midi = 60;
+  int layer = 0;   // 0 = main; 1-2 = supports of a layered keybed
   int sampleRate = 44100;
   int frames = 0;
   std::vector<float> left;
@@ -39,6 +40,10 @@ struct KitManifest
   std::vector<int> labelMidis;      // prompt note labels, in render order
   std::vector<int> soundingMidis;   // keys that have a sample
   bool complete = false;            // false while rendering or after a cancel
+  // Layered kits only (the top-level kit.json): each layer lives in its own folder
+  // (sa3::sat::keybed::kLayerDirNames) with its own kit.json and WAVs.
+  std::vector<std::string> layerDescriptors;
+  std::vector<uint64_t> layerSeeds;
 };
 
 // Documents/sa3-keybed (created on demand); empty on failure.
@@ -54,13 +59,17 @@ std::string NoteFileName(int midi);   // "Csharp3.wav"
 bool WriteNoteWav(const std::string& path, const NoteSample& note, std::string& error);
 bool WritePlanarWav(const std::string& path, const float* planar, int channels, int frames, int sampleRate,
                     std::string& error);
-NoteSamplePtr ReadNoteWav(const std::string& path, int midi, std::string& error);
+NoteSamplePtr ReadNoteWav(const std::string& path, int midi, std::string& error, int layer = 0);
 
 bool WriteKitManifest(const std::string& kitDir, const KitManifest& manifest, std::string& error);
 bool ReadKitManifest(const std::string& kitDir, KitManifest& manifest, std::string& error);
 bool WriteKitSfz(const std::string& kitDir, const std::vector<int>& soundingMidis, std::string& error);
+// One SFZ group per layer, at RC's tri-layer volumes, so other samplers play the layers together.
+bool WriteLayeredKitSfz(const std::string& kitDir, const std::vector<std::vector<int>>& layerMidis,
+                        std::string& error);
 
-// Loads every note WAV named by the manifest (or found by name when the manifest is missing).
+// Loads every note WAV named by the manifest (or found by name when the manifest is missing). A
+// layered kit loads each layer's folder, tagging samples with their layer.
 std::vector<NoteSamplePtr> LoadKitSamples(const std::string& kitDir, KitManifest& manifest, std::string& error);
 
 std::string FolderName(const std::string& path);
