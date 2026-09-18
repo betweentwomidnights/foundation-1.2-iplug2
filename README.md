@@ -33,7 +33,9 @@ range, steps, CFG, and render fx are shared. A build renders layer by layer, Mai
 keyboard is playable after a third of the time. Each layer's seed comes from the base seed exactly as
 RC derives it (`sa3::sat::keybed::layer_seed`), so a layered kit is reproducible from one number.
 The layers mix only at playback, with a volume per layer (host parameters, defaulting to RC's
-90 / 60 / 35 %) that appears under the playback sliders once a kit has layers. A layered kit keeps
+90 / 60 / 35 %, under his 0.55 master so full-scale layers don't clip) that appears under the
+playback sliders once a kit has layers. A layer that hasn't rendered yet reads "rendering...", and
+main plays at its mixed level from the first note, so nothing jumps when the supports arrive. A layered kit keeps
 each layer in `layer_1_main`, `layer_2_support`, and `layer_3_support`, and its top-level `kit.sfz`
 plays them together at the same mix.
 

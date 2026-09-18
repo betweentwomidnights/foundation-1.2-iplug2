@@ -332,7 +332,7 @@ float KeybedControl::DrawNoteWaveform(IGraphics& g, float left, float right, flo
 {
   // A layered keybed adds the supports line and the layer mix row; the waveform gives up the room.
   const keybed::BankSnapshot* bank = mPlugin.Bank();
-  const bool layered = mPlugin.LayerCount() > 1 || (bank && bank->layerCount > 1);
+  const bool layered = mPlugin.LayerCount() > 1 || (bank && bank->layered);
   const IRECT box(left, y, right, y + (layered ? 52.f : 76.f));
   mWaveformRect = box;
   g.FillRoundRect(PanelDark(), box, 4.f);
@@ -406,9 +406,16 @@ float KeybedControl::DrawLayerMix(IGraphics& g, float left, float right, float y
 {
   // RC's tri-layer mixer, shown once the kit (or the next build) has support layers.
   const keybed::BankSnapshot* bank = mPlugin.Bank();
-  const int layers = std::max(mPlugin.LayerCount(), bank ? bank->layerCount : 0);
+  const bool layeredKit = bank && bank->layered;
+  const int layers = layeredKit ? std::max(mPlugin.LayerCount(), bank->layerCount) : mPlugin.LayerCount();
   if (layers < 2)
     return y;
+  if (bank && bank->count > 0 && !layeredKit)
+  {
+    // The sheet has supports but the kit playing is single-layer: nothing to mix yet.
+    g.DrawText(Label(10.f, TextFaint()), "layer mix - build to hear the support layers", IRECT(left, y, right, y + 24.f));
+    return y + 25.f;
+  }
   static const char* const names[] = {"main", "sup 1", "sup 2"};
   const float gap = 10.f;
   const float w = (right - left - gap * 2.f) / 3.f;
@@ -417,6 +424,13 @@ float KeybedControl::DrawLayerMix(IGraphics& g, float left, float right, float y
     const float x = left + l * (w + gap);
     const IRECT cell(x, y, x + w, y + 24.f);
     const IParam* p = mPlugin.GetParam(kParamLayerMain + l);
+    if (layeredKit && !bank->hasLayer[(size_t)l])
+    {
+      // Not rendered yet (supports follow main), or the build stopped before this layer.
+      const std::string state = std::string(names[l]) + (mPlugin.Busy() ? " - rendering..." : " - not built");
+      g.DrawText(Label(10.f, TextFaint()), state.c_str(), cell);
+      continue;
+    }
     char value[16];
     std::snprintf(value, sizeof value, "%d%%", (int)std::lround(p->Value()));
     g.DrawText(Label(10.f, TextDim()), names[l], IRECT(cell.L, cell.T, cell.L + 34.f, cell.B));

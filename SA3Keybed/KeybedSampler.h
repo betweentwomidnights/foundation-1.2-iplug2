@@ -39,13 +39,19 @@ struct BankSnapshot
   uint64_t epoch = 0;
   int count = 0;        // keys with at least one sample
   int layerCount = 0;   // layers with at least one sample
+  std::array<bool, kMaxLayers> hasLayer{};
+  bool layered = false;   // from a multi-layer kit: the layer mix applies, even while supports render
 
   void BuildIndex()
   {
     count = 0;
     layerCount = 0;
+    layered = false;
     for (int k = 0; k < 128; ++k)
     {
+      for (int l = 0; l < kMaxLayers; ++l)
+        if (const auto& s = layers[(size_t)l][(size_t)k])
+          layered = layered || s->layered || l > 0;
       exact[(size_t)k] = nullptr;
       for (int l = 0; l < kMaxLayers && !exact[(size_t)k]; ++l)
         exact[(size_t)k] = layers[(size_t)l][(size_t)k];
@@ -67,6 +73,7 @@ struct BankSnapshot
         }
         any = any || samples[(size_t)k];
       }
+      hasLayer[(size_t)l] = any;
       layerCount += any ? 1 : 0;
     }
   }
@@ -152,8 +159,9 @@ struct SamplerSettings
   std::atomic<int> octave{0};
   std::atomic<bool> fillGaps{true};
   std::atomic<uint32_t> envelopeVersion{1};
-  // RC's tri-layer volumes; used only once a kit has more than one layer.
+  // RC's tri-layer volumes; used only for a layered kit, under RC's master level.
   std::array<std::atomic<double>, kMaxLayers> layerVolume{{{0.90}, {0.60}, {0.35}}};
+  static constexpr double kLayerMaster = 0.55;   // sa3::sat::keybed::kLayerMasterVolume
 };
 
 class KeybedEngine;
@@ -210,7 +218,7 @@ private:
   ADSREnvelope<sample> mEnv;
   std::array<Layer, kMaxLayers> mLayers{};
   std::array<Layer, kMaxLayers> mPending{};
-  bool mLayered = false;          // the bank this note came from had more than one layer
+  bool mLayered = false;          // the note came from a layered kit
   bool mPendingLayered = false;
   double mHostRate = 44100.;
   uint32_t mAppliedEnvelopeVersion = 0;
@@ -313,7 +321,7 @@ inline void KeybedVoice::Trigger(double level, bool isRetrigger)
       any = true;
     }
   }
-  mPendingLayered = bank && bank->layerCount > 1;
+  mPendingLayered = bank && bank->layered;
   const double sens = std::clamp(s.velocity.load(std::memory_order_relaxed), 0., 1.);
   const double gain = (1. - sens) + sens * level * level;
   bool playing = false;
@@ -348,7 +356,8 @@ inline void KeybedVoice::ProcessSamplesAccumulating(sample** inputs, sample** ou
   const double tune = s.tuneSemitones.load(std::memory_order_relaxed);
   std::array<double, kMaxLayers> volume{};
   for (int l = 0; l < kMaxLayers; ++l)
-    volume[(size_t)l] = mLayered ? s.layerVolume[(size_t)l].load(std::memory_order_relaxed) : 1.;
+    volume[(size_t)l] =
+      mLayered ? SamplerSettings::kLayerMaster * s.layerVolume[(size_t)l].load(std::memory_order_relaxed) : 1.;
   // The increment is recomputed only when a layer's sample changes (e.g. a retrigger swap).
   std::array<const NoteSample*, kMaxLayers> rateFor{};
   std::array<double, kMaxLayers> increment{};

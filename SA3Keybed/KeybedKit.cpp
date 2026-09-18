@@ -337,7 +337,7 @@ bool WriteNoteWav(const std::string& path, const NoteSample& note, std::string& 
   return WritePlanarWav(path, planar.data(), 2, note.frames, note.sampleRate, error);
 }
 
-NoteSamplePtr ReadNoteWav(const std::string& path, int midi, std::string& error, int layer)
+NoteSamplePtr ReadNoteWav(const std::string& path, int midi, std::string& error, int layer, bool layered)
 {
   std::ifstream in(PathFromUtf8(path), std::ios::binary);
   if (!in)
@@ -383,6 +383,7 @@ NoteSamplePtr ReadNoteWav(const std::string& path, int midi, std::string& error,
   auto note = std::make_shared<NoteSample>();
   note->midi = midi;
   note->layer = layer;
+  note->layered = layered;
   note->sampleRate = (int)rate;
   note->frames = frames;
   note->left.resize((size_t)frames);
@@ -520,7 +521,7 @@ bool WriteLayeredKitSfz(const std::string& kitDir, const std::vector<std::vector
   char line[200];
   for (size_t l = 0; l < layerMidis.size() && l < (size_t)kb::kLayerCount; ++l)
   {
-    const double db = 20.0 * std::log10((double)kb::kLayerDefaultVolumes[l]);
+    const double db = 20.0 * std::log10((double)(kb::kLayerMasterVolume * kb::kLayerDefaultVolumes[l]));
     std::snprintf(line, sizeof line,
                   "\n// %s\n<group> volume=%.2f ampeg_attack=0.0050 ampeg_decay=0.0000 ampeg_sustain=100 ampeg_release=0.2500\n",
                   kb::kLayerRoles[l], db);
@@ -546,7 +547,7 @@ bool WriteLayeredKitSfz(const std::string& kitDir, const std::vector<std::vector
 
 namespace
 {
-std::vector<NoteSamplePtr> LoadLayerSamples(const std::string& dir, int layer, KitManifest& manifest,
+std::vector<NoteSamplePtr> LoadLayerSamples(const std::string& dir, int layer, bool layered, KitManifest& manifest,
                                             std::string& error)
 {
   std::vector<NoteSamplePtr> notes;
@@ -564,7 +565,7 @@ std::vector<NoteSamplePtr> LoadLayerSamples(const std::string& dir, int layer, K
     if (!fs::is_regular_file(path, ec))
       continue;
     std::string noteError;
-    if (auto note = ReadNoteWav(Utf8FromPath(path), midi, noteError, layer))
+    if (auto note = ReadNoteWav(Utf8FromPath(path), midi, noteError, layer, layered))
       notes.push_back(std::move(note));
     else
       error = noteError;
@@ -582,13 +583,13 @@ std::vector<NoteSamplePtr> LoadKitSamples(const std::string& kitDir, KitManifest
     for (size_t l = 0; l < manifest.layerDescriptors.size() && l < (size_t)kb::kLayerCount; ++l)
     {
       KitManifest layerManifest;
-      auto layerNotes = LoadLayerSamples(Utf8FromPath(PathFromUtf8(kitDir) / kb::kLayerDirNames[l]), (int)l,
+      auto layerNotes = LoadLayerSamples(Utf8FromPath(PathFromUtf8(kitDir) / kb::kLayerDirNames[l]), (int)l, true,
                                          layerManifest, error);
       notes.insert(notes.end(), layerNotes.begin(), layerNotes.end());
     }
   }
   else
-    notes = LoadLayerSamples(kitDir, 0, manifest, error);
+    notes = LoadLayerSamples(kitDir, 0, false, manifest, error);
   if (notes.empty() && error.empty())
     error = "no note samples in " + kitDir;
   return notes;

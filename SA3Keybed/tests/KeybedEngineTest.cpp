@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <memory>
 #include <string>
 #include <thread>
 #include <vector>
@@ -225,6 +226,10 @@ int main(int argc, char** argv)
     for (size_t i = 0; mainFirst && i < layerNotes.size(); ++i)
       mainFirst = layerNotes[i]->layer == (int)(i / 6);
     Check(mainFirst, "18 notes arrived layer by layer, main first");
+    bool tagged = !layerNotes.empty();
+    for (const auto& note : layerNotes)
+      tagged = tagged && note->layered;
+    Check(tagged, "every note is tagged as part of a layered kit");
 
     const std::string layeredDir = ends.empty() ? std::string() : ends.back().kitDir;
     KitManifest manifest;
@@ -251,6 +256,30 @@ int main(int argc, char** argv)
     engine.settings.layerVolume[0].store(0.0);
     out = Play(engine, layeredBank, 60, 1.0, hostRate);
     Check(Rms(out) > 1e-4 && Rms(out) < full, "main muted: the supports still sound, quieter");
+    engine.settings.layerVolume[0].store(0.90);
+
+    // Mid-build: only main has landed, but the kit is layered, so main already plays at RC's mix
+    // (master 0.55 x 0.90) instead of jumping down when the supports arrive.
+    std::vector<NoteSamplePtr> mainOnly, mainPlain;
+    for (const auto& note : loaded)
+      if (note->layer == 0)
+      {
+        mainOnly.push_back(note);
+        auto plain = std::make_shared<NoteSample>(*note);
+        plain->layered = false;
+        mainPlain.push_back(std::move(plain));
+      }
+    KeybedBank partialBank, plainBank;
+    partialBank.Publish(mainOnly, true);
+    plainBank.Publish(mainPlain, true);
+    const BankSnapshot* partial = partialBank.Latest();
+    Check(partial && partial->layered && partial->hasLayer[0] && !partial->hasLayer[1] && !partial->hasLayer[2],
+          "main-only bank of a layered kit: layered, supports not present yet");
+    const double mixed = Rms(Play(engine, partialBank, 60, 1.0, hostRate));
+    const double plain = Rms(Play(engine, plainBank, 60, 1.0, hostRate));
+    const double ratio = plain > 0 ? mixed / plain : 0;
+    Check(std::fabs(ratio - 0.55 * 0.90) < 0.01, "main alone plays at RC's master x main level (" + std::to_string(ratio) + ")");
+
     for (auto& v : engine.settings.layerVolume)
       v.store(0.0);
     out = Play(engine, layeredBank, 60, 0.5, hostRate);

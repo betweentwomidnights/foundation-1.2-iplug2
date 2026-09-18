@@ -379,6 +379,7 @@ void KeybedRenderService::Run(KeybedJob job, uint64_t requestId)
         auto note = std::make_shared<NoteSample>();
         note->midi = slice.sounding_midi;
         note->layer = layer;
+        note->layered = layered;
         note->sampleRate = sampleRate;
         note->frames = (int)(planar.size() / (size_t)channels);
         note->left.assign(planar.begin(), planar.begin() + note->frames);

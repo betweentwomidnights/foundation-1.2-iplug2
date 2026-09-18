@@ -13,7 +13,8 @@ namespace keybed
 struct NoteSample
 {
   int midi = 60;
-  int layer = 0;   // 0 = main; 1-2 = supports of a layered keybed
+  int layer = 0;          // 0 = main; 1-2 = supports of a layered keybed
+  bool layered = false;   // part of a multi-layer kit, even before its supports have rendered
   int sampleRate = 44100;
   int frames = 0;
   std::vector<float> left;
@@ -59,7 +60,8 @@ std::string NoteFileName(int midi);   // "Csharp3.wav"
 bool WriteNoteWav(const std::string& path, const NoteSample& note, std::string& error);
 bool WritePlanarWav(const std::string& path, const float* planar, int channels, int frames, int sampleRate,
                     std::string& error);
-NoteSamplePtr ReadNoteWav(const std::string& path, int midi, std::string& error, int layer = 0);
+NoteSamplePtr ReadNoteWav(const std::string& path, int midi, std::string& error, int layer = 0,
+                          bool layered = false);
 
 bool WriteKitManifest(const std::string& kitDir, const KitManifest& manifest, std::string& error);
 bool ReadKitManifest(const std::string& kitDir, KitManifest& manifest, std::string& error);
