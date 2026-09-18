@@ -18,8 +18,10 @@ Foundation-1.2 Keybeds renders chromatic runs: six notes, 3.0 s each with 0.25 s
 
 The model renders one octave below its prompt labels, so keys are mapped by sounding pitch:
 MIDI 60 plays middle C. The default C2-B5 keyboard therefore covers C1-B4, and the octave control
-shifts it. Keys without a sample borrow the nearest one and repitch it ("fill gaps"). Playback is
-poly (32 voices) or mono: one key at a time, last-note priority, returning to a key still held, with a
+shifts it. Keys without a sample borrow the nearest one and repitch it ("fill gaps"). The model renders
+nearly every note at full scale, so the sampler plays kits 12 dB down: one key peaks near -12 dBFS
+(layered or not) and chords have room to add up instead of clipping; the WAVs on disk stay raw.
+Playback is poly (32 voices) or mono: one key at a time, last-note priority, returning to a key still held, with a
 20 ms crossfade between notes.
 
 Every render is saved under `Documents/sa3-keybed/kits/<time>-<name>-<seed>/`: one 32-bit float WAV

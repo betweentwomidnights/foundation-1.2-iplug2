@@ -16,7 +16,6 @@
 #include <filesystem>
 #include <random>
 
-
 namespace kb = sa3::sat::keybed;
 
 namespace
@@ -43,7 +42,7 @@ const char* RangeLabel(SA3Keybed::RangeChoice range)
 SA3Keybed::SA3Keybed(const InstanceInfo& info)
 : iplug::Plugin(info, MakeConfig(kNumParams, kNumPresets))
 {
-  GetParam(kParamGain)->InitDouble("Gain", 80., 0., 100., 0.1, "%");
+  GetParam(kParamGain)->InitDouble("Gain", 100., 0., 100., 0.1, "%");   // on top of the sampler's -12 dB headroom
   GetParam(kParamAttack)->InitDouble("Attack", 5., 0.5, 4000., 0.1, "ms", IParam::kFlagsNone, "Envelope", IParam::ShapePowCurve(3.));
   GetParam(kParamDecay)->InitDouble("Decay", 50., 1., 4000., 0.1, "ms", IParam::kFlagsNone, "Envelope", IParam::ShapePowCurve(3.));
   GetParam(kParamSustain)->InitDouble("Sustain", 100., 0., 100., 0.1, "%", IParam::kFlagsNone, "Envelope");

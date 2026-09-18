@@ -147,9 +147,14 @@ private:
   std::vector<Retired> mRetired;
 };
 
+// Headroom: Foundation-1.2 renders nearly every note at full scale (0 dBFS peaks), so the sampler plays
+// them 12 dB down. A single key (layered or not; RC's 0.55 master covers the layers) then peaks near
+// -12 dBFS and chords have room to add up instead of clipping. The WAVs on disk stay raw.
+constexpr double kKitHeadroom = 0.25;   // -12 dB
+
 struct SamplerSettings
 {
-  std::atomic<double> gain{0.8};
+  std::atomic<double> gain{1.0};
   std::atomic<double> attackMs{5.};
   std::atomic<double> decayMs{50.};
   std::atomic<double> sustain{1.};
@@ -278,7 +283,7 @@ public:
     mBlockBank = bank.Acquire();
     mSynth.ProcessBlock(nullptr, outputs, 0, 2, nFrames);       // voices accumulate into outputs
     mMonoSynth.ProcessBlock(nullptr, outputs, 0, 2, nFrames);
-    const sample target = (sample)settings.gain.load(std::memory_order_relaxed);
+    const sample target = (sample)(settings.gain.load(std::memory_order_relaxed) * kKitHeadroom);
     for (int s = 0; s < nFrames; ++s)
     {
       mSmoothedGain += (target - mSmoothedGain) * (sample)0.002;
@@ -297,7 +302,7 @@ private:
   MidiSynth mSynth{VoiceAllocator::kPolyModePoly, MidiSynth::kDefaultBlockSize};
   MidiSynth mMonoSynth{VoiceAllocator::kPolyModeMono, MidiSynth::kDefaultBlockSize};
   const BankSnapshot* mBlockBank = nullptr;   // audio thread only
-  sample mSmoothedGain = 0.8;
+  sample mSmoothedGain = (sample)kKitHeadroom;
   std::array<std::atomic<bool>, 128> mHeld;
   std::atomic<int> mLastKey{-1};
 };

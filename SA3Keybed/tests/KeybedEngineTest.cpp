@@ -260,6 +260,32 @@ int main(int argc, char** argv)
     Run(engine, bank, 0.6, hostRate);
   }
 
+  std::printf("3c. headroom\n");
+  {
+    const auto peakOf = [](const std::vector<double>& x) {
+      double p = 0.;
+      for (double v : x)
+        p = std::max(p, std::fabs(v));
+      return p;
+    };
+    double loudest = 0.;
+    for (const auto& note : notes)
+      loudest = std::max(loudest, (double)note->peak);
+    Key(engine, 60, true);
+    const double one = peakOf(Run(engine, bank, 0.5, hostRate));
+    Key(engine, 60, false);
+    Run(engine, bank, 0.6, hostRate);
+    const double oneDb = 20. * std::log10(one / std::max(1e-9, loudest));
+    Check(oneDb < -11. && oneDb > -13., "one key plays 12 dB below its sample (" + std::to_string(oneDb) + " dB)");
+    for (int key : {60, 62, 64, 65})
+      Key(engine, key, true);
+    const double chord = peakOf(Run(engine, bank, 0.5, hostRate));
+    for (int key : {60, 62, 64, 65})
+      Key(engine, key, false);
+    Run(engine, bank, 0.6, hostRate);
+    Check(chord < 1.0, "a four-note chord stays below full scale (peak " + std::to_string(chord) + ")");
+  }
+
   std::printf("4. reload the kit from disk\n");
   {
     KitManifest manifest;
