@@ -25,7 +25,7 @@ namespace kb = sa3::sat::keybed;
 namespace
 {
 constexpr uint32_t kStateMagic = 0x53334B42u;   // "S3KB"
-constexpr uint32_t kStateVersion = 2u;   // 2: an FX tag list replaced the single FX index
+constexpr uint32_t kStateVersion = 3u;   // 3: structured sound + locks; 2: FX tag list; 1: FX index
 constexpr const char* kVariant = "foundation-1.2-keybeds";
 
 const char* RangeLabel(SA3Keybed::RangeChoice range)
@@ -189,58 +189,55 @@ void SA3Keybed::OnIdle()
 
 std::string SA3Keybed::Descriptor() const
 {
-  return mDescriptor;
+  return kb::descriptor_of(mSound);
 }
 
 void SA3Keybed::SetDescriptor(const std::string& text)
 {
-  const kb::DescriptorTokens tokens = kb::split_descriptor_tokens(text);
-  std::vector<std::string> parts = tokens.body;
-  // FX words typed into the descriptor imply Wet; keep them so they reach the prompt.
-  if (!tokens.fx.empty())
+  kb::SoundSpec sorted = kb::classify_descriptor(text);
+  // Text that says nothing about the space keeps the current render fx.
+  bool mentionsSpace = !kb::split_descriptor_tokens(text).fx.empty();
+  for (const std::string& raw : kb::detail::split_commas(text))
   {
-    parts.insert(parts.end(), tokens.fx.begin(), tokens.fx.end());
-    mWet = true;
+    const std::string low = kb::detail::lower(raw);
+    mentionsSpace = mentionsSpace || low == "wet" || low == "dry";
   }
-  std::string joined;
-  for (const auto& part : parts)
-    joined += (joined.empty() ? "" : ", ") + part;
-  mDescriptor = joined;
-}
-
-void SA3Keybed::SetWet(bool wet)
-{
-  mWet = wet;
-  if (wet && mFxTags.empty())
-    mFxTags = {"Medium Reverb"};   // the most common reverb tag, so wet always names a space
-}
-
-void SA3Keybed::SetFxTags(std::vector<std::string> tags)
-{
-  const auto& choices = kb::vocab::fx_choices();
-  mFxTags.clear();
-  for (auto& tag : tags)
-    if (std::find(choices.begin(), choices.end(), tag) != choices.end() &&
-        std::find(mFxTags.begin(), mFxTags.end(), tag) == mFxTags.end())
-      mFxTags.push_back(std::move(tag));
+  if (!mentionsSpace)
+  {
+    sorted.wet = mSound.wet;
+    sorted.fx = mSound.fx;
+  }
+  mSound = std::move(sorted);
 }
 
 std::string SA3Keybed::FxLabel() const
 {
   std::string label;
-  for (const auto& tag : mFxTags)
+  for (const auto& tag : mSound.fx)
     label += (label.empty() ? "" : " + ") + tag;
   return label;
 }
 
-void SA3Keybed::RollDescriptor()
+void SA3Keybed::RollSound()
 {
   std::random_device device;
   const uint64_t seed = ((uint64_t)device() << 32) ^ device();
-  mDescriptor = kb::random_descriptor(seed, mWet).descriptor;
-  // A wet roll picks the space too, following RC's one-or-two-tag chains.
-  if (mWet)
-    mFxTags = kb::random_fx_chain(seed ^ 0x9e3779b97f4a7c15ull);
+  const kb::SoundSpec rolled = kb::random_sound(seed, mSound.wet);
+  if (!mLocks[kSectionInstrument])
+  {
+    mSound.family = rolled.family;
+    mSound.subfamily = rolled.subfamily;
+    mSound.second_instrument.clear();
+  }
+  if (!mLocks[kSectionCharacter])
+    mSound.character = rolled.character;
+  if (!mLocks[kSectionShape])
+  {
+    mSound.articulation = rolled.articulation;
+    mSound.oscillator = rolled.oscillator;
+  }
+  if (!mLocks[kSectionFx] && mSound.wet)
+    mSound.fx = rolled.fx;   // RC's one-or-two-tag chains
 }
 
 void SA3Keybed::SetSteps(int steps)
@@ -339,10 +336,9 @@ bool SA3Keybed::StartJob(std::vector<kb::Chunk> chunks, std::string rangeLabel, 
   job.modelsDir = mModelsDir;
   job.variant = kVariant;
   job.encoding = mEncoding;
-  job.descriptor = mDescriptor;
-  job.wet = mWet;
-  if (mWet)
-    job.fx = mFxTags;
+  job.descriptor = kb::descriptor_of(mSound);
+  job.wet = mSound.wet;
+  job.fx = kb::fx_of(mSound);
   job.chunks = std::move(chunks);
   job.rangeLabel = std::move(rangeLabel);
   job.steps = mSteps;
@@ -351,7 +347,7 @@ bool SA3Keybed::StartJob(std::vector<kb::Chunk> chunks, std::string rangeLabel, 
   // RoyalCities' flow: a full build after a preview of the same descriptor keeps the preview's seed.
   if (mUseSeed)
     job.seed = mSeed;
-  else if (!preview && mHasLastSeed && mLastSeedDescriptor == mDescriptor)
+  else if (!preview && mHasLastSeed && mLastSeedDescriptor == Descriptor())
     job.seed = (int64_t)(mLastSeed & 0x7fffffffffffffffull);
   else
     job.seed = -1;
@@ -362,7 +358,7 @@ bool SA3Keybed::StartJob(std::vector<kb::Chunk> chunks, std::string rangeLabel, 
     SetStatus(error, true);
     return false;
   }
-  mJobDescriptor = mDescriptor;
+  mJobDescriptor = Descriptor();
   mReplaceBankOnNextNote = true;
   {
     std::lock_guard<std::mutex> lock(mKitLoadMutex);   // a render supersedes a kit still loading
@@ -465,14 +461,17 @@ void SA3Keybed::InstallLoadedKit()
   mManifest = kit.manifest;
   if (kit.adoptSettings && !kit.manifest.descriptor.empty())
   {
-    mDescriptor = kit.manifest.descriptor;
-    mWet = kit.manifest.wet;
+    mSound = kb::classify_descriptor(kit.manifest.descriptor);
+    mSound.wet = kit.manifest.wet;
+    mSound.fx.clear();
+    for (const auto& tag : kit.manifest.fx)
+      kb::set_fx(mSound, tag);
   }
   if (kit.adoptSettings && kit.manifest.seed)
   {
     mLastSeed = kit.manifest.seed;
     mHasLastSeed = true;
-    mLastSeedDescriptor = mDescriptor;
+    mLastSeedDescriptor = Descriptor();
   }
   SetStatus("loaded " + std::to_string(kit.notes.size()) + " notes" + (kit.error.empty() ? "" : " (" + kit.error + ")"),
             !kit.error.empty());
@@ -503,15 +502,29 @@ bool SA3Keybed::SerializeState(IByteChunk& chunk) const
 {
   chunk.Put(&kStateMagic);
   chunk.Put(&kStateVersion);
-  chunk.PutStr(mDescriptor.c_str());
-  const int32_t wet = mWet ? 1 : 0, useSeed = mUseSeed ? 1 : 0, hasLast = mHasLastSeed ? 1 : 0;
+  const auto putList = [&chunk](const std::vector<std::string>& items) {
+    const int32_t count = (int32_t)items.size();
+    chunk.Put(&count);
+    for (const auto& item : items)
+      chunk.PutStr(item.c_str());
+  };
+  chunk.PutStr(mSound.family.c_str());
+  chunk.PutStr(mSound.subfamily.c_str());
+  chunk.PutStr(mSound.second_instrument.c_str());
+  putList(mSound.character);
+  chunk.PutStr(mSound.articulation.c_str());
+  chunk.PutStr(mSound.oscillator.c_str());
+  putList(mSound.extras);
+  const int32_t wet = mSound.wet ? 1 : 0;
+  chunk.Put(&wet);
+  putList(mSound.fx);
+  int32_t locks = 0;
+  for (int i = 0; i < kNumSections; ++i)
+    locks |= mLocks[(size_t)i] ? (1 << i) : 0;
+  chunk.Put(&locks);
+  const int32_t useSeed = mUseSeed ? 1 : 0, hasLast = mHasLastSeed ? 1 : 0;
   const int32_t steps = mSteps, previewCount = mPreviewCount, root = mPreviewRootLabel,
                 range = (int32_t)mRange;
-  const int32_t fxCount = (int32_t)mFxTags.size();
-  chunk.Put(&wet);
-  chunk.Put(&fxCount);
-  for (const auto& tag : mFxTags)
-    chunk.PutStr(tag.c_str());
   chunk.Put(&steps);
   chunk.Put(&mCfgScale);
   chunk.Put(&useSeed);
@@ -538,26 +551,60 @@ int SA3Keybed::UnserializeState(const IByteChunk& chunk, int startPos)
   float cfg = 6.f;
   int64_t seed = 0;
   uint64_t lastSeed = 0;
-  pos = chunk.GetStr(text, pos);
-  mDescriptor = text.Get();
-  pos = chunk.Get(&wet, pos);
-  std::vector<std::string> fxTags;
-  if (version >= 2u)
-  {
-    int32_t fxCount = 0;
-    pos = chunk.Get(&fxCount, pos);
-    for (int32_t i = 0; i < std::clamp<int32_t>(fxCount, 0, 8) && pos >= 0; ++i)
+  const auto getString = [&](std::string& out) {
+    pos = chunk.GetStr(text, pos);
+    out = text.Get();
+  };
+  const auto getList = [&](std::vector<std::string>& out) {
+    int32_t count = 0;
+    pos = chunk.Get(&count, pos);
+    out.clear();
+    for (int32_t i = 0; i < std::clamp<int32_t>(count, 0, 32) && pos >= 0; ++i)
     {
       pos = chunk.GetStr(text, pos);
-      fxTags.emplace_back(text.Get());
+      out.emplace_back(text.Get());
     }
+  };
+  kb::SoundSpec sound;
+  int32_t locks = 0;
+  if (version >= 3u)
+  {
+    getString(sound.family);
+    getString(sound.subfamily);
+    getString(sound.second_instrument);
+    getList(sound.character);
+    getString(sound.articulation);
+    getString(sound.oscillator);
+    getList(sound.extras);
+    pos = chunk.Get(&wet, pos);
+    sound.wet = wet != 0;
+    std::vector<std::string> fxTags;
+    getList(fxTags);
+    for (const auto& tag : fxTags)
+      kb::set_fx(sound, tag);
+    pos = chunk.Get(&locks, pos);
   }
   else
   {
-    pos = chunk.Get(&fx, pos);   // version 1 stored one index into the FX choices
-    const auto& choices = kb::vocab::fx_choices();
-    if (fx >= 0 && fx < (int32_t)choices.size())
-      fxTags.push_back(choices[(size_t)fx]);
+    // Versions 1-2 stored the descriptor as text; sort it onto the controls.
+    std::string descriptor;
+    getString(descriptor);
+    sound = kb::classify_descriptor(descriptor);
+    pos = chunk.Get(&wet, pos);
+    sound.wet = wet != 0;
+    std::vector<std::string> fxTags;
+    if (version >= 2u)
+      getList(fxTags);
+    else
+    {
+      pos = chunk.Get(&fx, pos);   // version 1 stored one index into the FX choices
+      const auto& choices = kb::vocab::fx_choices();
+      if (fx >= 0 && fx < (int32_t)choices.size())
+        fxTags.push_back(choices[(size_t)fx]);
+    }
+    sound.fx.clear();
+    for (const auto& tag : fxTags)
+      kb::set_fx(sound, tag);
   }
   pos = chunk.Get(&steps, pos);
   pos = chunk.Get(&cfg, pos);
@@ -575,8 +622,9 @@ int SA3Keybed::UnserializeState(const IByteChunk& chunk, int startPos)
   if (pos < 0)
     return pos;
 
-  mWet = wet != 0;
-  SetFxTags(std::move(fxTags));
+  mSound = std::move(sound);
+  for (int i = 0; i < kNumSections; ++i)
+    mLocks[(size_t)i] = (locks >> i) & 1;
   SetSteps(steps);
   SetCfgScale(cfg);
   mUseSeed = useSeed != 0;

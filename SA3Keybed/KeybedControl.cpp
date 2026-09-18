@@ -109,8 +109,12 @@ void KeybedControl::Draw(IGraphics& g)
   g.FillRoundRect(Panel(), shell, 7.f);
   g.DrawRoundRect(Frame(), shell, 7.f);
   mParamSliders.clear();
+  mKnobs.clear();
+  mSheetHits.clear();
   if (mSettingsOpen)
     DrawSettings(g, shell);
+  else if (mSoundOpen)
+    DrawSoundSheet(g, shell);
   else
     DrawMain(g, shell);
 }
@@ -161,47 +165,33 @@ float KeybedControl::DrawStatus(IGraphics& g, float left, float right, float y)
 
 float KeybedControl::DrawDescriptor(IGraphics& g, float left, float right, float y)
 {
-  g.DrawText(Label(12.f, TextDim()), "instrument", IRECT(left, y, left + 120.f, y + 16.f));
+  // Typing sorts the text onto the sound sheet's controls; "edit" opens those controls.
+  g.DrawText(Label(12.f, TextDim()), "sound", IRECT(left, y, left + 120.f, y + 16.f));
   mDiceRect = IRECT(right - 34.f, y + 18.f, right, y + 50.f);
   DrawIconButton(g, mDiceRect, TransportIcon::Dice);
-  mDescriptorRect = IRECT(left, y + 18.f, mDiceRect.L - 8.f, y + 50.f);
+  mEditSoundRect = IRECT(mDiceRect.L - 52.f, y + 18.f, mDiceRect.L - 6.f, y + 50.f);
+  DrawButton(g, mEditSoundRect, "edit", kFont);
+  mDescriptorRect = IRECT(left, y + 18.f, mEditSoundRect.L - 6.f, y + 50.f);
   g.FillRoundRect(ButtonFill(), mDescriptorRect, 3.f);
   g.DrawRoundRect(Frame(), mDescriptorRect, 3.f);
   const std::string descriptor = mPlugin.Descriptor();
   const bool empty = descriptor.empty();
   g.DrawText(Label(13.f, empty ? TextDim() : COLOR_WHITE),
-             Compact(empty ? "describe a sound: Grand Piano, Warm, Soft" : descriptor,
+             Compact(empty ? "type a sound, e.g. Grand Piano, Warm" : descriptor,
                      FitChars(mDescriptorRect.W() - 16.f, 6.2f)).c_str(),
              mDescriptorRect.GetHPadded(-8.f));
-  return y + 58.f;
+  const std::string fx = mPlugin.FxLabel();
+  const std::string space = !mPlugin.Wet() ? "dry - add reverb and delay in your DAW"
+                          : fx.empty()     ? "wet - the model picks the space"
+                                           : "wet - " + fx;
+  g.DrawText(Label(10.f, mPlugin.Wet() ? TextDim() : TextFaint()),
+             Compact(space, FitChars(mDescriptorRect.W(), 5.4f)).c_str(),
+             IRECT(left + 2.f, y + 52.f, right, y + 66.f));
+  return y + 72.f;
 }
 
 float KeybedControl::DrawGeneration(IGraphics& g, float left, float right, float y)
 {
-  // Dry / Wet + FX tag. This is prompt conditioning, not a DSP effect: Wet asks the model to
-  // render the sample with that space already in it.
-  g.DrawText(Label(11.f, TextDim()), "render fx", IRECT(left, y, left + 86.f, y + 26.f));
-  mDryRect = IRECT(left + 92.f, y + 1.f, left + 146.f, y + 25.f);
-  mWetRect = IRECT(mDryRect.R + 6.f, y + 1.f, mDryRect.R + 60.f, y + 25.f);
-  DrawTab(g, mDryRect, "dry", kFont, !mPlugin.Wet());
-  DrawTab(g, mWetRect, "wet", kFont, mPlugin.Wet());
-  mFxRect = {};
-  if (mPlugin.Wet())
-  {
-    mFxRect = IRECT(mWetRect.R + 10.f, y + 1.f, right, y + 25.f);
-    const std::string label = mPlugin.FxLabel();
-    DrawDropButton(g, mFxRect,
-                   Compact(label.empty() ? "let the model choose" : label,
-                           FitChars(mFxRect.W() - 24.f, 6.f)).c_str());
-  }
-  y += 26.f;
-  const char* hint = !mPlugin.Wet() ? "dry samples, so reverb and delay stay yours to add in the DAW"
-                   : !mPlugin.FxTags().empty()
-                       ? "wet bakes this space into every sample - it cannot be removed later"
-                       : "wet with no tag: the model picks a space, and it is baked in";
-  g.DrawText(Label(10.f, TextFaint()), hint, IRECT(left + 92.f, y, right, y + 14.f));
-  y += 18.f;
-
   char value[32];
   std::snprintf(value, sizeof value, "%d", mPlugin.Steps());
   DrawSlider(g, IRECT(left, y, right, y + 24.f), "steps", value, (mPlugin.Steps() - 2.f) / 148.f, mStepsRect);
@@ -370,7 +360,7 @@ float KeybedControl::DrawNoteWaveform(IGraphics& g, float left, float right, flo
 
 float KeybedControl::DrawSound(IGraphics& g, float left, float right, float y)
 {
-  g.DrawText(Label(12.f, TextDim()), "sound", IRECT(left, y, left + 80.f, y + 16.f));
+  g.DrawText(Label(12.f, TextDim()), "playback", IRECT(left, y, left + 80.f, y + 16.f));
   y += 18.f;
   static const std::pair<int, const char*> sliders[] = {
     {kParamGain, "gain"}, {kParamAttack, "attack"}, {kParamDecay, "decay"}, {kParamSustain, "sustain"},
@@ -549,8 +539,16 @@ void KeybedControl::OnMouseDown(float x, float y, const IMouseMod& mod)
     return;
   }
 
+  if (mSoundOpen)
+  {
+    OnSheetMouseDown(x, y, mod);
+    SetDirty(false);
+    return;
+  }
+
   if (mSettingsRect.Contains(x, y)) { mSettingsOpen = true; SetDirty(false); return; }
-  if (mDiceRect.Contains(x, y)) { mPlugin.RollDescriptor(); SetDirty(false); return; }
+  if (mDiceRect.Contains(x, y)) { mPlugin.RollSound(); SetDirty(false); return; }
+  if (mEditSoundRect.Contains(x, y)) { mSoundOpen = true; SetDirty(false); return; }
   if (mDescriptorRect.Contains(x, y) && GetUI())
   {
     mEdit = Edit::Descriptor;
@@ -558,9 +556,6 @@ void KeybedControl::OnMouseDown(float x, float y, const IMouseMod& mod)
                              mDescriptorRect, mPlugin.Descriptor().c_str(), 0);
     return;
   }
-  if (mDryRect.Contains(x, y)) { mPlugin.SetWet(false); SetDirty(false); return; }
-  if (mWetRect.Contains(x, y)) { mPlugin.SetWet(true); SetDirty(false); return; }
-  if (mFxRect.Contains(x, y)) { OpenFxMenu(); return; }
   if (mStepsRect.Contains(x, y)) { mDrag = Drag::Steps; mDragRect = mStepsRect; OnMouseDrag(x, y, 0, 0, mod); return; }
   if (mCfgRect.Contains(x, y)) { mDrag = Drag::Cfg; mDragRect = mCfgRect; OnMouseDrag(x, y, 0, 0, mod); return; }
   if (mSeedToggleRect.Contains(x, y))
@@ -699,6 +694,20 @@ void KeybedControl::OnMouseDrag(float x, float y, float dX, float dY, const IMou
         GetUI()->InitiateExternalFileDragDrop(path.c_str(), mDragOutRect);
       }
       return;
+    case Drag::Knob:
+    {
+      // Vertical drag steps through the vocabulary (gary4juce's SteppedKnob feel): at least
+      // 100 px of travel for the whole list, and never less than 3 px per step.
+      const int steps = (int)KnobVocabulary(mActiveKnob.kind, mActiveKnob.index).size();
+      if (steps > 1)
+      {
+        const float perStep = std::max(3.f, 100.f / (float)(steps - 1));
+        const int step = std::clamp(mKnobDragStartStep + (int)std::lround((mDragStartY - y) / perStep), 0, steps - 1);
+        SetKnobValue(mActiveKnob.kind, mActiveKnob.index,
+                     KnobVocabulary(mActiveKnob.kind, mActiveKnob.index)[(size_t)step]);
+      }
+      break;
+    }
     case Drag::None: return;
   }
   SetDirty(false);
@@ -778,6 +787,25 @@ void KeybedControl::OnTextEntryCompletion(const char* str, int valIdx)
 {
   if (mEdit == Edit::Descriptor)
     mPlugin.SetDescriptor(str ? str : "");
+  else if (mEdit == Edit::NewExtra || mEdit == Edit::Extra)
+  {
+    // Extras are free text, but vocabulary words typed here still land on their controls.
+    kb::SoundSpec sound = mPlugin.Sound();
+    const std::string text = kb::detail::trim(str ? str : "");
+    if (mEdit == Edit::Extra && mEditIndex >= 0 && mEditIndex < (int)sound.extras.size())
+      sound.extras.erase(sound.extras.begin() + mEditIndex);
+    if (!text.empty())
+    {
+      std::vector<std::string> fx = sound.fx;
+      kb::SoundSpec merged = kb::classify_descriptor(kb::descriptor_of(sound) + ", " + text);
+      merged.wet = sound.wet || merged.wet;
+      for (const auto& tag : fx)
+        kb::set_fx(merged, tag);
+      sound = merged;
+    }
+    mPlugin.SetSound(std::move(sound));
+    mEditIndex = -1;
+  }
   else if (mEdit == Edit::Seed)
   {
     mPlugin.SetSeedValue(ParseSeed(str, mPlugin.SeedValue()));
@@ -785,28 +813,6 @@ void KeybedControl::OnTextEntryCompletion(const char* str, int valIdx)
   }
   mEdit = Edit::None;
   SetDirty(false);
-}
-
-void KeybedControl::OpenFxMenu()
-{
-  if (!GetUI())
-    return;
-  mMenu.Clear();
-  mMenu.AddItem("let the model choose");
-  mMenu.AddItem("roll a chain");   // RC's weighted one-or-two-tag pick, same as the dice
-  mMenu.AddSeparator();
-  const auto& choices = kb::vocab::fx_choices();
-  const auto& chosen = mPlugin.FxTags();
-  for (const auto& fx : choices)
-  {
-    mMenu.AddItem(fx.c_str());
-    if (std::find(chosen.begin(), chosen.end(), fx) != chosen.end())
-      mMenu.CheckItem(mMenu.NItems() - 1, true);
-  }
-  if (chosen.empty())
-    mMenu.CheckItem(0, true);
-  mPopup = Popup::Fx;
-  GetUI()->CreatePopupMenu(*this, mMenu, mFxRect);
 }
 
 void KeybedControl::OpenPreviewRootMenu()
@@ -830,18 +836,36 @@ void KeybedControl::OnPopupMenuSelection(IPopupMenu* pMenu, int valIdx)
   const int index = pMenu ? pMenu->GetChosenItemIdx() : -1;
   if (index >= 0)
   {
-    if (mPopup == Popup::Fx)
-    {
-      const auto& choices = kb::vocab::fx_choices();
-      if (index == 0)
-        mPlugin.SetFxTags({});
-      else if (index == 1)
-        mPlugin.SetFxTags(kb::random_fx_chain(std::random_device{}()));
-      else if (index >= 3 && index - 3 < (int)choices.size())
-        mPlugin.SetFxTags({choices[(size_t)(index - 3)]});
-    }
-    else if (mPopup == Popup::PreviewRoot)
+    if (mPopup == Popup::PreviewRoot)
       mPlugin.SetPreviewRootLabel(kb::kPreviewRootMin + index);
+    else
+    {
+      // List menus: an optional leading "none", then mMenuItems.
+      const int item = index - (mMenuHasNone ? 1 : 0);
+      const std::string value = item >= 0 && item < (int)mMenuItems.size() ? mMenuItems[(size_t)item] : std::string();
+      kb::SoundSpec sound = mPlugin.Sound();
+      switch (mPopup)
+      {
+        case Popup::Family:
+          if (value != sound.family)
+          {
+            sound.family = value;
+            sound.subfamily.clear();   // types belong to a family
+          }
+          break;
+        case Popup::Type: sound.subfamily = value; break;
+        case Popup::Second: sound.second_instrument = value; break;
+        case Popup::Knob:
+          if (!value.empty())
+          {
+            SetKnobValue(mActiveKnob.kind, mActiveKnob.index, value);
+            sound = mPlugin.Sound();
+          }
+          break;
+        default: break;
+      }
+      mPlugin.SetSound(std::move(sound));
+    }
   }
   mPopup = Popup::None;
   SetDirty(false);
@@ -856,4 +880,499 @@ std::string KeybedControl::PickDirectory(const std::string& seed)
     dir.Set(seed.c_str());
   GetUI()->PromptForDirectory(dir);
   return dir.GetLength() > 0 ? std::string(dir.Get()) : std::string();
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Sound sheet: the descriptor as a knob surface, after gary4juce's Foundation panel. Each
+// category is a toggle that reveals a stepped knob over its vocabulary; FX are pedals.
+
+namespace
+{
+constexpr int kMaxCharacter = 8;   // RC rolls up to seven timbre tags
+constexpr int kMaxExtras = 5;
+constexpr const char* kFxNames[] = {"reverb", "delay", "distortion", "phaser", "bitcrush"};
+
+const std::vector<std::string>& FxTokens(int category)
+{
+  static const std::vector<std::vector<std::string>> tokens = []() {
+    std::vector<std::vector<std::string>> out;
+    for (const auto& c : kb::vocab::fx_categories())
+    {
+      std::vector<std::string> names;
+      for (const auto& t : c.tokens)
+        names.emplace_back(t.first);
+      out.push_back(std::move(names));
+    }
+    return out;
+  }();
+  static const std::vector<std::string> none;
+  return category >= 0 && category < (int)tokens.size() ? tokens[(size_t)category] : none;
+}
+
+// The category's most common tag (RC's weights), used when a pedal is switched on.
+std::string DefaultFxToken(int category)
+{
+  const auto& categories = kb::vocab::fx_categories();
+  if (category < 0 || category >= (int)categories.size())
+    return {};
+  const auto& tokens = categories[(size_t)category].tokens;
+  return std::max_element(tokens.begin(), tokens.end(),
+                          [](const auto& a, const auto& b) { return a.second < b.second; })->first;
+}
+
+int FxCategoryIndex(const std::string& tag)
+{
+  const auto* category = kb::vocab::fx_category_of(tag);
+  const auto& categories = kb::vocab::fx_categories();
+  for (size_t i = 0; i < categories.size(); ++i)
+    if (&categories[i] == category)
+      return (int)i;
+  return -1;
+}
+
+int IndexOf(const std::vector<std::string>& list, const std::string& value)
+{
+  const auto it = std::find(list.begin(), list.end(), value);
+  return it == list.end() ? 0 : (int)std::distance(list.begin(), it);
+}
+
+IText EntryText(float size)
+{
+  return IText(size, COLOR_WHITE, kFont, EAlign::Near, EVAlign::Middle).WithTEColors(PanelDark(), COLOR_WHITE);
+}
+} // namespace
+
+const std::vector<std::string>& KeybedControl::KnobVocabulary(KnobKind kind, int index) const
+{
+  switch (kind)
+  {
+    case KnobKind::Character: return kb::vocab::character_tags();
+    case KnobKind::Articulation: return kb::vocab::articulation_tags();
+    case KnobKind::Oscillator: return kb::vocab::oscillator_tags();
+    case KnobKind::Fx: return FxTokens(index);
+  }
+  return kb::vocab::character_tags();
+}
+
+std::string KeybedControl::KnobValue(KnobKind kind, int index) const
+{
+  const kb::SoundSpec& sound = mPlugin.Sound();
+  switch (kind)
+  {
+    case KnobKind::Character:
+      return index >= 0 && index < (int)sound.character.size() ? sound.character[(size_t)index] : std::string();
+    case KnobKind::Articulation: return sound.articulation;
+    case KnobKind::Oscillator: return sound.oscillator;
+    case KnobKind::Fx:
+      for (const auto& tag : sound.fx)
+        if (FxCategoryIndex(tag) == index)
+          return tag;
+      return {};
+  }
+  return {};
+}
+
+void KeybedControl::SetKnobValue(KnobKind kind, int index, const std::string& value)
+{
+  kb::SoundSpec sound = mPlugin.Sound();
+  switch (kind)
+  {
+    case KnobKind::Character:
+      if (index >= 0 && index < (int)sound.character.size())
+        sound.character[(size_t)index] = value;
+      break;
+    case KnobKind::Articulation: sound.articulation = value; break;
+    case KnobKind::Oscillator: sound.oscillator = value; break;
+    case KnobKind::Fx: kb::set_fx(sound, value); break;
+  }
+  mPlugin.SetSound(std::move(sound));
+}
+
+void KeybedControl::StepKnob(const KnobHit& knob, int delta)
+{
+  const auto& vocabulary = KnobVocabulary(knob.kind, knob.index);
+  if (vocabulary.empty())
+    return;
+  const int step = std::clamp(IndexOf(vocabulary, KnobValue(knob.kind, knob.index)) + delta, 0,
+                              (int)vocabulary.size() - 1);
+  SetKnobValue(knob.kind, knob.index, vocabulary[(size_t)step]);
+}
+
+const KeybedControl::KnobHit* KeybedControl::KnobAt(float x, float y) const
+{
+  for (const auto& knob : mKnobs)
+    if (knob.rect.Contains(x, y))
+      return &knob;
+  return nullptr;
+}
+
+void KeybedControl::DrawKnob(IGraphics& g, const IRECT& bounds, const std::string& value, int step, int steps)
+{
+  // IGraphics arcs are in degrees clockwise from 12 o'clock: sweep 270 degrees, 7 to 5 o'clock.
+  const float size = std::min(bounds.W(), bounds.H() - 14.f);
+  const float cx = bounds.MW();
+  const float cy = bounds.T + size * 0.5f;
+  const float r = size * 0.5f - 3.f;
+  const float fraction = steps > 1 ? (float)step / (float)(steps - 1) : 0.f;
+  const float angle = -135.f + fraction * 270.f;
+  g.DrawArc(FrameSoft(), cx, cy, r, -135.f, 135.f, nullptr, 3.f);
+  g.DrawArc(Red(), cx, cy, r, -135.f, std::max(angle, -134.f), nullptr, 3.f);
+  g.FillCircle(ButtonFill(), cx, cy, r * 0.5f);
+  g.DrawCircle(Frame(), cx, cy, r * 0.5f);
+  const float rad = angle * 3.14159265f / 180.f;
+  g.DrawLine(COLOR_WHITE, cx + std::sin(rad) * r * 0.2f, cy - std::cos(rad) * r * 0.2f,
+             cx + std::sin(rad) * (r - 5.f), cy - std::cos(rad) * (r - 5.f), nullptr, 2.f);
+
+  // The value under the knob, shrunk to fit its cell.
+  float fontSize = 10.f;
+  IRECT measured;
+  while (fontSize > 7.f)
+  {
+    if (g.MeasureText(IText(fontSize, COLOR_WHITE, kFont), value.c_str(), measured) <= bounds.W() + 8.f)
+      break;
+    fontSize -= 0.5f;
+  }
+  g.DrawText(IText(fontSize, COLOR_WHITE, kFont, EAlign::Center, EVAlign::Middle), value.c_str(),
+             IRECT(bounds.L - 6.f, bounds.B - 14.f, bounds.R + 6.f, bounds.B));
+}
+
+void KeybedControl::DrawLock(IGraphics& g, const IRECT& bounds, bool locked)
+{
+  const IColor color = locked ? Red() : TextFaint();
+  const float cx = bounds.MW();
+  const IRECT body(cx - 5.f, bounds.MH() - 1.f, cx + 5.f, bounds.MH() + 6.f);
+  // Shackle: closed over the body when locked, swung open when not.
+  g.DrawArc(color, cx, body.T, 3.5f, -90.f, locked ? 90.f : 20.f, nullptr, 1.5f);
+  if (locked)
+    g.FillRoundRect(color, body, 1.5f);
+  else
+    g.DrawRoundRect(color, body, 1.5f, nullptr, 1.2f);
+}
+
+float KeybedControl::DrawSectionLabel(IGraphics& g, float left, float right, float y, const char* label,
+                                      int lockSection, const char* addLabel, SheetAction addAction)
+{
+  g.DrawText(Label(11.f, TextDim()), label, IRECT(left, y, left + 160.f, y + 16.f));
+  float x = right;
+  if (lockSection >= 0)
+  {
+    const IRECT lock(right - 16.f, y, right, y + 16.f);
+    DrawLock(g, lock, mPlugin.Locked(lockSection));
+    mSheetHits.push_back({lock.GetPadded(3.f), SheetAction::Lock, lockSection});
+    x = lock.L - 10.f;
+  }
+  if (addLabel)
+  {
+    const IRECT add(x - 130.f, y, x, y + 16.f);
+    g.DrawText(Label(11.f, Red(), EAlign::Far), addLabel, add);
+    mSheetHits.push_back({add, addAction, 0});
+  }
+  return y + 20.f;
+}
+
+float KeybedControl::DrawKnobRow(IGraphics& g, float left, float right, float y, const std::vector<KnobHit>& knobs,
+                                 bool removable)
+{
+  if (knobs.empty())
+    return y;
+  const float gap = 10.f;
+  const int n = (int)knobs.size();
+  const float size = std::clamp((right - left - gap * (n - 1)) / (float)n, 44.f, 64.f);
+  float x = (left + right) * 0.5f - (size * n + gap * (n - 1)) * 0.5f;
+  for (int i = 0; i < n; ++i)
+  {
+    KnobHit knob = knobs[(size_t)i];
+    knob.rect = IRECT(x, y, x + size, y + size + 14.f);
+    const auto& vocabulary = KnobVocabulary(knob.kind, knob.index);
+    const std::string value = KnobValue(knob.kind, knob.index);
+    DrawKnob(g, knob.rect, value, IndexOf(vocabulary, value), (int)vocabulary.size());
+    mKnobs.push_back(knob);
+    if (removable)
+    {
+      const IRECT remove(x, knob.rect.B + 1.f, x + size, knob.rect.B + 15.f);
+      g.DrawText(IText(10.f, TextFaint(), kFont, EAlign::Center, EVAlign::Middle), "remove", remove);
+      mSheetHits.push_back({remove, SheetAction::RemoveCharacter, knob.index});
+    }
+    x += size + gap;
+  }
+  return y + size + 14.f + (removable ? 16.f : 0.f) + 8.f;
+}
+
+void KeybedControl::DrawSoundSheet(IGraphics& g, const IRECT& shell)
+{
+  const float left = shell.L + 18.f;
+  const float right = shell.R - 18.f;
+  const kb::SoundSpec& sound = mPlugin.Sound();
+  float y = shell.T + 14.f;
+
+  g.DrawText(Label(18.f, COLOR_WHITE), "sound", IRECT(left, y, left + 120.f, y + 28.f));
+  g.DrawText(Label(10.f, TextFaint()), "drag, scroll, or right-click a knob", IRECT(left + 64.f, y + 4.f, right - 110.f, y + 28.f));
+  const IRECT done(right - 56.f, y + 2.f, right, y + 26.f);
+  const IRECT dice(done.L - 38.f, y, done.L - 8.f, y + 28.f);
+  DrawButton(g, done, "done", kFont);
+  DrawIconButton(g, dice, TransportIcon::Dice);
+  mSheetHits.push_back({done, SheetAction::Done, 0});
+  mSheetHits.push_back({dice, SheetAction::Dice, 0});
+  y += 38.f;
+
+  // instrument: family and type, plus RC's optional second (hybrid) instrument
+  y = DrawSectionLabel(g, left, right, y, "instrument", SA3Keybed::kSectionInstrument,
+                       sound.second_instrument.empty() ? "+ second instrument" : nullptr, SheetAction::AddSecond);
+  const float half = (right - left - 8.f) * 0.5f;
+  const IRECT family(left, y, left + half, y + 24.f);
+  const IRECT type(family.R + 8.f, y, right, y + 24.f);
+  DrawDropButton(g, family, sound.family.empty() ? "family" : sound.family.c_str());
+  const bool hasTypes = !kb::vocab::subfamilies(sound.family).empty();
+  DrawDropButton(g, type, !sound.subfamily.empty() ? sound.subfamily.c_str() : hasTypes ? "type" : "-");
+  mSheetHits.push_back({family, SheetAction::Family, 0});
+  if (hasTypes)
+    mSheetHits.push_back({type, SheetAction::Type, 0});
+  y += 30.f;
+  if (!sound.second_instrument.empty())
+  {
+    const IRECT second(left, y, right - 60.f, y + 24.f);
+    const IRECT remove(second.R + 6.f, y, right, y + 24.f);
+    DrawDropButton(g, second, ("+ " + sound.second_instrument).c_str());
+    g.DrawText(Label(10.f, TextFaint(), EAlign::Center), "remove", remove);
+    mSheetHits.push_back({second, SheetAction::Second, 0});
+    mSheetHits.push_back({remove, SheetAction::RemoveSecond, 0});
+    y += 30.f;
+  }
+  y += 4.f;
+
+  // character: timbre knobs
+  y = DrawSectionLabel(g, left, right, y, "character", SA3Keybed::kSectionCharacter,
+                       (int)sound.character.size() < kMaxCharacter ? "+ add" : nullptr, SheetAction::AddCharacter);
+  std::vector<KnobHit> knobs;
+  for (int i = 0; i < (int)sound.character.size(); ++i)
+    knobs.push_back({IRECT(), KnobKind::Character, i});
+  if (knobs.empty())
+  {
+    g.DrawText(Label(10.f, TextFaint()), "no character tags - add one or roll the dice", IRECT(left, y, right, y + 16.f));
+    y += 22.f;
+  }
+  else
+    y = DrawKnobRow(g, left, right, y, knobs, true);
+
+  // shape: articulation and oscillator, each a toggle revealing its knob
+  y = DrawSectionLabel(g, left, right, y, "shape", SA3Keybed::kSectionShape, nullptr, SheetAction::Done);
+  const float mid = (left + right) * 0.5f;
+  const IRECT articulation(mid - 116.f, y, mid - 4.f, y + 24.f);
+  const IRECT oscillator(mid + 4.f, y, mid + 116.f, y + 24.f);
+  DrawTab(g, articulation, "articulation", kFont, !sound.articulation.empty());
+  DrawTab(g, oscillator, "oscillator", kFont, !sound.oscillator.empty());
+  mSheetHits.push_back({articulation, SheetAction::Articulation, 0});
+  mSheetHits.push_back({oscillator, SheetAction::Oscillator, 0});
+  y += 30.f;
+  knobs.clear();
+  if (!sound.articulation.empty()) knobs.push_back({IRECT(), KnobKind::Articulation, 0});
+  if (!sound.oscillator.empty()) knobs.push_back({IRECT(), KnobKind::Oscillator, 0});
+  y = DrawKnobRow(g, left, right, y, knobs, false) + (knobs.empty() ? 4.f : 0.f);
+
+  // render fx: dry/wet, then one pedal per FX category
+  y = DrawSectionLabel(g, left, right, y, "render fx", SA3Keybed::kSectionFx, nullptr, SheetAction::Done);
+  const IRECT dry(left, y, left + 54.f, y + 24.f);
+  const IRECT wet(dry.R + 6.f, y, dry.R + 60.f, y + 24.f);
+  DrawTab(g, dry, "dry", kFont, !sound.wet);
+  DrawTab(g, wet, "wet", kFont, sound.wet);
+  mSheetHits.push_back({dry, SheetAction::Dry, 0});
+  mSheetHits.push_back({wet, SheetAction::Wet, 0});
+  const char* hint = !sound.wet ? "dry samples: add reverb and delay in your DAW"
+                   : sound.fx.empty() ? "no pedals on: the model picks the space"
+                                      : "baked into every sample";
+  g.DrawText(Label(10.f, TextFaint()), hint, IRECT(wet.R + 10.f, y, right, y + 24.f));
+  y += 30.f;
+  if (sound.wet)
+  {
+    const float pedalW = (right - left - 4.f * 6.f) / 5.f;
+    knobs.clear();
+    for (int i = 0; i < 5; ++i)
+    {
+      const IRECT pedal(left + i * (pedalW + 6.f), y, left + i * (pedalW + 6.f) + pedalW, y + 24.f);
+      const bool on = !KnobValue(KnobKind::Fx, i).empty();
+      DrawTab(g, pedal, kFxNames[i], kFont, on);
+      mSheetHits.push_back({pedal, SheetAction::Pedal, i});
+      if (on)
+        knobs.push_back({IRECT(), KnobKind::Fx, i});
+    }
+    y += 30.f;
+    y = DrawKnobRow(g, left, right, y, knobs, false);
+  }
+  y += 2.f;
+
+  // extras: free text the vocabulary does not cover
+  y = DrawSectionLabel(g, left, right, y, "extra descriptors", -1,
+                       (int)sound.extras.size() < kMaxExtras ? "+ add" : nullptr, SheetAction::AddExtra);
+  for (int i = 0; i < (int)sound.extras.size(); ++i)
+  {
+    const IRECT field(left, y, right - 60.f, y + 22.f);
+    const IRECT remove(field.R + 6.f, y, right, y + 22.f);
+    g.FillRoundRect(ButtonFill(), field, 3.f);
+    g.DrawRoundRect(Frame(), field, 3.f);
+    g.DrawText(Label(11.f, COLOR_WHITE), Compact(sound.extras[(size_t)i], FitChars(field.W() - 12.f, 6.f)).c_str(),
+               field.GetHPadded(-6.f));
+    g.DrawText(Label(10.f, TextFaint(), EAlign::Center), "remove", remove);
+    mSheetHits.push_back({field, SheetAction::EditExtra, i});
+    mSheetHits.push_back({remove, SheetAction::RemoveExtra, i});
+    y += 26.f;
+  }
+  mNewExtraRect = IRECT(left, y, right - 60.f, y + 22.f);
+  if (sound.extras.empty())
+  {
+    g.DrawText(Label(10.f, TextFaint()), "words outside the vocabulary, e.g. tape wobble", IRECT(left, y, right, y + 16.f));
+    y += 20.f;
+  }
+  y += 4.f;
+
+  // the prompt one chunk will send
+  g.DrawText(Label(11.f, TextDim()), "prompt", IRECT(left, y, right, y + 16.f));
+  y += 18.f;
+  const IRECT preview(left, y, right, std::min(shell.B - 14.f, y + 58.f));
+  g.FillRoundRect(PanelDark(), preview, 3.f);
+  g.DrawRoundRect(FrameSoft(), preview, 3.f);
+  const std::string prompt = kb::sequence_prompt_of(sound, {60, 61}) + ", ...";
+  g.DrawMultiLineText(IText(10.f, TextDim(), kFont, EAlign::Near, EVAlign::Top), prompt.c_str(), preview.GetPadded(-6.f));
+}
+
+void KeybedControl::OpenListMenu(Popup popup, const std::vector<std::string>& items, const std::string& current,
+                                 const IRECT& anchor, bool allowNone)
+{
+  if (!GetUI())
+    return;
+  mMenu.Clear();
+  mMenuItems = items;
+  mMenuHasNone = allowNone;
+  if (allowNone)
+  {
+    mMenu.AddItem("none");
+    if (current.empty())
+      mMenu.CheckItem(0, true);
+  }
+  for (const auto& item : items)
+  {
+    mMenu.AddItem(item.c_str());
+    if (item == current)
+      mMenu.CheckItem(mMenu.NItems() - 1, true);
+  }
+  mPopup = popup;
+  GetUI()->CreatePopupMenu(*this, mMenu, anchor);
+}
+
+void KeybedControl::OnSheetMouseDown(float x, float y, const IMouseMod& mod)
+{
+  if (const KnobHit* knob = KnobAt(x, y))
+  {
+    mActiveKnob = *knob;
+    if (mod.R)   // right-click: the whole vocabulary, current value ticked
+      OpenListMenu(Popup::Knob, KnobVocabulary(knob->kind, knob->index), KnobValue(knob->kind, knob->index),
+                   knob->rect, false);
+    else
+    {
+      mDrag = Drag::Knob;
+      mDragStartY = y;
+      mKnobDragStartStep = IndexOf(KnobVocabulary(knob->kind, knob->index), KnobValue(knob->kind, knob->index));
+    }
+    return;
+  }
+
+  const SheetHit* hit = nullptr;
+  for (const auto& h : mSheetHits)
+    if (h.rect.Contains(x, y))
+    {
+      hit = &h;
+      break;
+    }
+  if (!hit)
+    return;
+
+  kb::SoundSpec sound = mPlugin.Sound();
+  switch (hit->action)
+  {
+    case SheetAction::Done: mSoundOpen = false; return;
+    case SheetAction::Dice: mPlugin.RollSound(); return;
+    case SheetAction::Lock: mPlugin.SetLocked(hit->index, !mPlugin.Locked(hit->index)); return;
+    case SheetAction::Family:
+      OpenListMenu(Popup::Family, kb::vocab::all_families(), sound.family, hit->rect, true);
+      return;
+    case SheetAction::Type:
+    {
+      std::vector<std::string> types;
+      for (const auto& sub : kb::vocab::subfamilies(sound.family))
+        types.emplace_back(sub.first);
+      OpenListMenu(Popup::Type, types, sound.subfamily, hit->rect, true);
+      return;
+    }
+    case SheetAction::AddSecond:
+    case SheetAction::Second:
+      OpenListMenu(Popup::Second, kb::vocab::instruments(), sound.second_instrument, hit->rect, false);
+      return;
+    case SheetAction::RemoveSecond: sound.second_instrument.clear(); break;
+    case SheetAction::AddCharacter:
+    {
+      // A fresh knob starts on a tag the sound does not have yet.
+      std::vector<std::string> unused;
+      for (const auto& tag : kb::vocab::character_tags())
+        if (std::find(sound.character.begin(), sound.character.end(), tag) == sound.character.end())
+          unused.push_back(tag);
+      if (!unused.empty())
+      {
+        std::mt19937 rng(std::random_device{}());
+        sound.character.push_back(unused[std::uniform_int_distribution<size_t>(0, unused.size() - 1)(rng)]);
+      }
+      break;
+    }
+    case SheetAction::RemoveCharacter:
+      if (hit->index >= 0 && hit->index < (int)sound.character.size())
+        sound.character.erase(sound.character.begin() + hit->index);
+      break;
+    case SheetAction::Articulation:
+      sound.articulation = sound.articulation.empty() ? "Sustained" : std::string();
+      break;
+    case SheetAction::Oscillator:
+      sound.oscillator = sound.oscillator.empty() ? "Sine" : std::string();
+      break;
+    case SheetAction::Dry: sound.wet = false; break;
+    case SheetAction::Wet: sound.wet = true; break;
+    case SheetAction::Pedal:
+    {
+      const std::string current = KnobValue(KnobKind::Fx, hit->index);
+      if (current.empty())
+        kb::set_fx(sound, DefaultFxToken(hit->index));
+      else
+        sound.fx.erase(std::remove(sound.fx.begin(), sound.fx.end(), current), sound.fx.end());
+      break;
+    }
+    case SheetAction::AddExtra:
+      if (GetUI())
+      {
+        mEdit = Edit::NewExtra;
+        GetUI()->CreateTextEntry(*this, EntryText(11.f), mNewExtraRect, "", 0);
+      }
+      return;
+    case SheetAction::EditExtra:
+      if (GetUI() && hit->index < (int)sound.extras.size())
+      {
+        mEdit = Edit::Extra;
+        mEditIndex = hit->index;
+        GetUI()->CreateTextEntry(*this, EntryText(11.f), hit->rect, sound.extras[(size_t)hit->index].c_str(), 0);
+      }
+      return;
+    case SheetAction::RemoveExtra:
+      if (hit->index >= 0 && hit->index < (int)sound.extras.size())
+        sound.extras.erase(sound.extras.begin() + hit->index);
+      break;
+  }
+  mPlugin.SetSound(std::move(sound));
+}
+
+void KeybedControl::OnMouseWheel(float x, float y, const IMouseMod& mod, float d)
+{
+  if (mSoundOpen)
+    if (const KnobHit* knob = KnobAt(x, y))
+    {
+      StepKnob(*knob, d > 0.f ? 1 : -1);
+      SetDirty(false);
+      return;
+    }
+  IControl::OnMouseWheel(x, y, mod, d);
 }

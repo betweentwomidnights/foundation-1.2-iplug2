@@ -28,13 +28,34 @@ public:
   void OnMouseDrag(float x, float y, float dX, float dY, const IMouseMod& mod) override;
   void OnMouseUp(float x, float y, const IMouseMod& mod) override;
   void OnMouseDblClick(float x, float y, const IMouseMod& mod) override;
+  void OnMouseWheel(float x, float y, const IMouseMod& mod, float d) override;
   void OnPopupMenuSelection(IPopupMenu* pMenu, int valIdx) override;
   void OnTextEntryCompletion(const char* str, int valIdx) override;
 
 private:
-  enum class Popup { None, Fx, PreviewRoot };
-  enum class Edit { None, Descriptor, Seed };
-  enum class Drag { None, Steps, Cfg, Param, Key, FileOut };
+  enum class Popup { None, PreviewRoot, Family, Type, Second, Knob };
+  enum class Edit { None, Descriptor, Seed, NewExtra, Extra };
+  enum class Drag { None, Steps, Cfg, Param, Key, FileOut, Knob };
+
+  // Sound sheet: stepped knobs over a vocabulary, and the buttons around them.
+  enum class KnobKind { Character, Articulation, Oscillator, Fx };
+  struct KnobHit
+  {
+    IRECT rect;
+    KnobKind kind = KnobKind::Character;
+    int index = 0;   // character slot, or FX category
+  };
+  enum class SheetAction
+  {
+    Done, Dice, Lock, Family, Type, AddSecond, Second, RemoveSecond, AddCharacter, RemoveCharacter,
+    Articulation, Oscillator, Dry, Wet, Pedal, AddExtra, EditExtra, RemoveExtra
+  };
+  struct SheetHit
+  {
+    IRECT rect;
+    SheetAction action = SheetAction::Done;
+    int index = 0;
+  };
 
   struct ParamSlider
   {
@@ -44,6 +65,21 @@ private:
 
   void DrawMain(IGraphics& g, const IRECT& shell);
   void DrawSettings(IGraphics& g, const IRECT& shell);
+  void DrawSoundSheet(IGraphics& g, const IRECT& shell);
+  float DrawSectionLabel(IGraphics& g, float left, float right, float y, const char* label, int lockSection,
+                         const char* addLabel, SheetAction addAction);
+  float DrawKnobRow(IGraphics& g, float left, float right, float y, const std::vector<KnobHit>& knobs,
+                    bool removable);
+  void DrawKnob(IGraphics& g, const IRECT& bounds, const std::string& value, int step, int steps);
+  void DrawLock(IGraphics& g, const IRECT& bounds, bool locked);
+  void OnSheetMouseDown(float x, float y, const IMouseMod& mod);
+  const std::vector<std::string>& KnobVocabulary(KnobKind kind, int index) const;
+  std::string KnobValue(KnobKind kind, int index) const;
+  void SetKnobValue(KnobKind kind, int index, const std::string& value);
+  void StepKnob(const KnobHit& knob, int delta);
+  const KnobHit* KnobAt(float x, float y) const;
+  void OpenListMenu(Popup popup, const std::vector<std::string>& items, const std::string& current,
+                    const IRECT& anchor, bool allowNone);
   float DrawHeader(IGraphics& g, float left, float right, float y);
   float DrawStatus(IGraphics& g, float left, float right, float y);
   float DrawDescriptor(IGraphics& g, float left, float right, float y);
@@ -65,12 +101,20 @@ private:
   int KeyAt(float x, float y) const;
   void PressKey(int key);
   void ReleaseKey();
-  void OpenFxMenu();
   void OpenPreviewRootMenu();
   std::string PickDirectory(const std::string& seed);
 
   SA3Keybed& mPlugin;
   bool mSettingsOpen = false;
+  bool mSoundOpen = false;
+  std::vector<KnobHit> mKnobs;
+  std::vector<SheetHit> mSheetHits;
+  KnobHit mActiveKnob;          // knob being dragged or whose menu is open
+  int mKnobDragStartStep = 0;
+  std::vector<std::string> mMenuItems;   // items behind the open list menu (after a leading "none")
+  bool mMenuHasNone = false;
+  int mEditIndex = -1;
+  IRECT mNewExtraRect;          // where a new extra-descriptor row is typed
   Popup mPopup = Popup::None;
   Edit mEdit = Edit::None;
   Drag mDrag = Drag::None;
@@ -84,7 +128,7 @@ private:
   int mWaveformKey = -1;
 
   // hit rects, refreshed every Draw
-  IRECT mSettingsRect, mDescriptorRect, mDiceRect, mDryRect, mWetRect, mFxRect;
+  IRECT mSettingsRect, mDescriptorRect, mDiceRect, mEditSoundRect;
   IRECT mStepsRect, mCfgRect, mSeedToggleRect, mSeedFieldRect;
   std::array<IRECT, 3> mPreviewCountRects{};
   IRECT mPreviewRootRect, mPreviewRect;

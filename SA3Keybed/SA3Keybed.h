@@ -51,17 +51,25 @@ public:
   int UnserializeState(const IByteChunk& chunk, int startPos) override;
 
   // --- UI-thread API used by KeybedControl ---------------------------------------------------------
+  // The sound is structured (sa3::sat::keybed::SoundSpec): the sound sheet edits its parts, and
+  // typed text is sorted onto them. The descriptor string is always derived from it.
+  enum Section { kSectionInstrument = 0, kSectionCharacter, kSectionShape, kSectionFx, kNumSections };
+  const sa3::sat::keybed::SoundSpec& Sound() const { return mSound; }
+  void SetSound(sa3::sat::keybed::SoundSpec sound) { mSound = std::move(sound); }
   std::string Descriptor() const;
-  void SetDescriptor(const std::string& text);   // cleans pasted keybed prompts
-  void RollDescriptor();
-  bool Wet() const { return mWet; }
+  // Typed or pasted text: sorted onto the controls. Text with no FX or wet/dry words keeps the
+  // current render fx.
+  void SetDescriptor(const std::string& text);
+  // Dice: a new RC-weighted sound; locked sections are kept.
+  void RollSound();
+  bool Locked(int section) const { return section >= 0 && section < kNumSections && mLocks[(size_t)section]; }
+  void SetLocked(int section, bool locked) { if (section >= 0 && section < kNumSections) mLocks[(size_t)section] = locked; }
+  bool Wet() const { return mSound.wet; }
   // Turning wet on with no tag chosen picks the model's most common space, so "wet" always
   // names a sound; the tag can still be cleared to let the model decide.
   void SetWet(bool wet);
-  // FX tags carried by a Wet prompt: empty lets the model choose the space, one is a picked tag,
-  // and the dice can roll RC's one-or-two-tag chains.
-  const std::vector<std::string>& FxTags() const { return mFxTags; }
-  void SetFxTags(std::vector<std::string> tags);
+  // FX tags a wet prompt carries, one per category; empty lets the model choose the space.
+  const std::vector<std::string>& FxTags() const { return mSound.fx; }
   std::string FxLabel() const;
   int Steps() const { return mSteps; }
   void SetSteps(int steps);
@@ -125,9 +133,8 @@ private:
   keybed::KeybedRenderService mRender;
 
   // generation settings (UI thread; persisted in the state chunk)
-  std::string mDescriptor = "Rhodes Piano, Warm, Soft";
-  bool mWet = false;
-  std::vector<std::string> mFxTags;
+  sa3::sat::keybed::SoundSpec mSound = sa3::sat::keybed::classify_descriptor("Keys, Rhodes Piano, Warm, Soft");
+  std::array<bool, kNumSections> mLocks{};
   int mSteps = 80;
   float mCfgScale = 6.f;
   bool mUseSeed = false;
