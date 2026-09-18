@@ -1439,7 +1439,7 @@ float KeybedControl::DrawLayerTabs(IGraphics& g, float left, float right, float 
   if (mPlugin.EditLayer() > 0)
   {
     const IRECT remove(right - 60.f, y, right, y + 24.f);
-    g.DrawText(Label(10.f, TextFaint(), EAlign::Far), "remove", remove);
+    g.DrawText(Label(11.f, Red(), EAlign::Far), "- remove", remove);   // pairs with "+ layer"
     mSheetHits.push_back({remove, SheetAction::RemoveLayer, mPlugin.EditLayer()});
   }
   return y + 32.f;
