@@ -5,6 +5,7 @@
 #include "KeybedKit.h"
 #include "KeybedRenderService.h"
 #include "KeybedSampler.h"
+#include "ModelDownload.h"
 
 #include <algorithm>
 #include <array>
@@ -110,7 +111,16 @@ public:
   bool KeepResident() const { return mKeepResident; }
   void SetKeepResident(bool keep);
   bool ModelsReady(std::string* missing = nullptr) const;
+  bool TierPresent(const std::string& encoding) const;   // all three files of a tier in ModelsDir()
   void ReleaseModels();
+
+  // Downloads the selected tier from Hugging Face into ModelsDir(), then selects it.
+  bool StartModelDownload();
+  void CancelModelDownload() { mDownloader.Cancel(); }
+  bool Downloading() const { return mDownloader.Busy(); }
+  float DownloadProgress() const { return mDownloader.Progress(); }
+  std::string DownloadStatus() const { return mDownloader.Status(); }
+  std::string DownloadingTier() const { return mDownloader.Encoding(); }
 
   bool StartPreview();
   bool StartFullBuild();
@@ -146,6 +156,7 @@ private:
   keybed::KeybedEngine mEngine;
   keybed::KeybedBank mBank;
   keybed::KeybedRenderService mRender;
+  keybed::ModelDownloader mDownloader;
 
   // generation settings (UI thread; persisted in the state chunk)
   std::array<sa3::sat::keybed::SoundSpec, 3> mLayers{

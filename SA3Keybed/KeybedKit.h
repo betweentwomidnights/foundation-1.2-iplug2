@@ -50,6 +50,7 @@ struct KitManifest
 // Documents/sa3-keybed (created on demand); empty on failure.
 std::string AppDirectory();
 std::string KitsDirectory();
+std::string DefaultModelsDirectory();   // AppDirectory()/models, where downloads land by default
 std::string CreateKitDirectory(const std::string& descriptor, uint64_t seed);
 
 // Small persisted preferences in AppDirectory()/settings.txt ("key=value" lines).

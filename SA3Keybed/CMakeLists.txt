@@ -17,6 +17,8 @@ iplug_add_plugin(${PROJECT_NAME}
     KeybedRenderService.cpp
     KeybedRenderService.h
     KeybedSampler.h
+    ModelDownload.cpp
+    ModelDownload.h
     Sa3Runtime.cpp
     Sa3Runtime.h
     config.h

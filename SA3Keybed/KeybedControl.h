@@ -104,7 +104,8 @@ private:
   void PressKey(int key);
   void ReleaseKey();
   void OpenPreviewRootMenu();
-  std::string PickDirectory(const std::string& seed);
+  // Opens at `start` (or its nearest existing parent); empty when cancelled.
+  std::string PickDirectory(const std::string& start, const char* title);
 
   SA3Keybed& mPlugin;
   bool mSettingsOpen = false;
@@ -140,7 +141,8 @@ private:
   IRECT mOctaveDownRect, mOctaveUpRect, mFillGapsRect;
   IRECT mRevealKitRect, mLoadKitRect, mKitLabelRect, mWaveformRect;
   IRECT mModelsFolderRect, mResidentRect, mReleaseRect, mCloseRect;
-  std::array<IRECT, 3> mEncodingRects{};
+  std::array<IRECT, 4> mEncodingRects{};
+  IRECT mDownloadRect;
 
   // cached peaks for the last-played sample
   const keybed::NoteSample* mPeaksFor = nullptr;

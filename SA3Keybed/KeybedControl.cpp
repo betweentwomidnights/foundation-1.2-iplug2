@@ -6,12 +6,17 @@
 
 #include "sat/keybed.h"
 
+#if defined(OS_WIN)
+#include <shobjidl.h>
+#endif
+
 #include <algorithm>
 #include <cerrno>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <limits>
 #include <random>
 
@@ -142,8 +147,13 @@ float KeybedControl::DrawHeader(IGraphics& g, float left, float right, float y)
   mSettingsRect = IRECT(right - 70.f, y + 2.f, right, y + 24.f);
   DrawButton(g, mSettingsRect, "settings", kFont);
   const bool ready = mPlugin.ModelsReady();
-  g.DrawText(Label(12.f, ready ? Green() : Red(), EAlign::Far),
-             ready ? (mPlugin.Encoding() + " ready").c_str() : "no models - open settings",
+  char label[64];
+  if (mPlugin.Downloading())
+    std::snprintf(label, sizeof label, "downloading %s %.0f%%", mPlugin.DownloadingTier().c_str(),
+                  mPlugin.DownloadProgress() * 100.f);
+  else
+    std::snprintf(label, sizeof label, "%s", ready ? (mPlugin.Encoding() + " ready").c_str() : "no models - open settings");
+  g.DrawText(Label(12.f, mPlugin.Downloading() ? TextDim() : ready ? Green() : Red(), EAlign::Far), label,
              IRECT(left + 170.f, y, mSettingsRect.L - 8.f, y + 26.f));
   return y + 30.f;
 }
@@ -473,32 +483,54 @@ void KeybedControl::DrawSettings(IGraphics& g, const IRECT& shell)
   DrawButton(g, mCloseRect, "x", kFont);
   y += 42.f;
 
-  // models
+  // models: pick a tier, then a folder that has it or a download into that folder
   IRECT card(left, y, right, y + 196.f);
   g.FillRoundRect(PanelDark(), card, 5.f);
   g.DrawRoundRect(FrameSoft(), card, 5.f);
   g.DrawText(Label(14.f, COLOR_WHITE), "Foundation-1.2 Keybeds models", IRECT(card.L + 12.f, card.T + 8.f, card.R - 12.f, card.T + 30.f));
-  mModelsFolderRect = IRECT(card.L + 12.f, card.T + 36.f, card.R - 12.f, card.T + 62.f);
-  DrawDropButton(g, mModelsFolderRect, Compact(mPlugin.ModelsDir(), FitChars(mModelsFolderRect.W() - 24.f, 6.f)).c_str());
-  std::string missing;
-  const bool ready = mPlugin.ModelsReady(&missing);
-  g.DrawMultiLineText(IText(10.f, ready ? Green() : Red(), kFont, EAlign::Near, EVAlign::Top),
-                      ready ? "all three files found" : missing.c_str(),
-                      IRECT(card.L + 12.f, card.T + 68.f, card.R - 12.f, card.T + 108.f));
-  g.DrawText(Label(11.f, TextDim()), "tier", IRECT(card.L + 12.f, card.T + 112.f, card.L + 60.f, card.T + 136.f));
-  static const char* tiers[] = {"F16", "Q8_0", "Q5_K_M"};
-  float x = card.L + 60.f;
-  for (int i = 0; i < 3; ++i)
+  const bool downloading = mPlugin.Downloading();
+  const auto& tiers = keybed::ModelTiers();
+  const float tabW = (card.W() - 24.f - 6.f * (float)(tiers.size() - 1)) / (float)tiers.size();
+  float x = card.L + 12.f;
+  for (size_t i = 0; i < tiers.size() && i < mEncodingRects.size(); ++i)
   {
-    mEncodingRects[(size_t)i] = IRECT(x, card.T + 112.f, x + 70.f, card.T + 136.f);
-    DrawTab(g, mEncodingRects[(size_t)i], tiers[i], kFont, mPlugin.Encoding() == tiers[i]);
-    x += 76.f;
+    mEncodingRects[i] = IRECT(x, card.T + 36.f, x + tabW, card.T + 60.f);
+    DrawTab(g, mEncodingRects[i], tiers[i].c_str(), kFont, mPlugin.Encoding() == tiers[i]);
+    x += tabW + 6.f;
   }
-  g.DrawMultiLineText(IText(10.f, TextDim(), kFont, EAlign::Near, EVAlign::Top),
-                      "expects foundation-1.2-keybeds-dit-1.1B-v1.0-<tier>.gguf, "
-                      "t5-base-encoder-128tok-0.1B-v1.0-<tier>.gguf and "
-                      "stable-audio-open-oobleck-v1.0-<tier>.gguf in one folder",
-                      IRECT(card.L + 12.f, card.T + 144.f, card.R - 12.f, card.B - 6.f));
+  const std::string tier = mPlugin.Encoding();
+  const std::string size = keybed::HumanBytes(keybed::ModelTierBytes(tier));
+  g.DrawText(Label(10.f, TextFaint()),
+             (tier + " - " + size + ", three files" + (tier == "F16" ? " - reference quality" : tier == "Q4_K_M" ? " - smallest and fastest to load" : "")).c_str(),
+             IRECT(card.L + 12.f, card.T + 62.f, card.R - 12.f, card.T + 76.f));
+
+  g.DrawText(Label(11.f, TextDim()), "folder", IRECT(card.L + 12.f, card.T + 80.f, card.L + 60.f, card.T + 104.f));
+  mModelsFolderRect = IRECT(card.L + 60.f, card.T + 80.f, card.R - 12.f, card.T + 104.f);
+  DrawDropButton(g, mModelsFolderRect, Compact(mPlugin.ModelsDir(), FitChars(mModelsFolderRect.W() - 24.f, 6.f)).c_str());
+
+  const bool present = mPlugin.TierPresent(tier);
+  mDownloadRect = IRECT(card.L + 12.f, card.T + 112.f, card.L + 172.f, card.T + 138.f);
+  if (downloading)
+  {
+    DrawButton(g, mDownloadRect, "cancel download", kFont);
+    const IRECT meter(mDownloadRect.R + 10.f, card.T + 118.f, card.R - 12.f, card.T + 132.f);
+    g.FillRoundRect(ButtonFill(), meter, 3.f);
+    g.FillRoundRect(RedDim(), IRECT(meter.L, meter.T, meter.L + meter.W() * std::clamp(mPlugin.DownloadProgress(), 0.f, 1.f), meter.B), 3.f);
+    g.DrawRoundRect(FrameSoft(), meter, 3.f);
+    g.DrawText(Label(10.f, TextDim()), Compact(mPlugin.DownloadStatus(), FitChars(card.W() - 24.f, 5.4f)).c_str(),
+               IRECT(card.L + 12.f, card.T + 144.f, card.R - 12.f, card.T + 160.f));
+  }
+  else
+  {
+    DrawButton(g, mDownloadRect, present ? ("re-check " + tier).c_str() : ("download " + tier + " - " + size).c_str(), kFont,
+               false, !mPlugin.Busy() || !present);
+    g.DrawText(Label(11.f, present ? Green() : Red()), present ? "all three files found" : "not in this folder yet",
+               IRECT(mDownloadRect.R + 10.f, mDownloadRect.T, card.R - 12.f, mDownloadRect.B));
+  }
+  g.DrawMultiLineText(IText(10.f, TextFaint(), kFont, EAlign::Near, EVAlign::Top),
+                      "downloads from huggingface.co/thepatch/foundation-1.2-keybeds-GGUF into the folder above "
+                      "and resume if interrupted. or choose a folder that already has the files.",
+                      IRECT(card.L + 12.f, card.T + 164.f, card.R - 12.f, card.B - 4.f));
   y = card.B + 12.f;
 
   // lifecycle
@@ -585,16 +617,22 @@ void KeybedControl::OnMouseDown(float x, float y, const IMouseMod& mod)
     if (mCloseRect.Contains(x, y)) mSettingsOpen = false;
     else if (mModelsFolderRect.Contains(x, y))
     {
-      const std::string dir = PickDirectory(mPlugin.ModelsDir());
+      const std::string dir = PickDirectory(mPlugin.ModelsDir(), "Choose the models folder");
       if (!dir.empty()) mPlugin.SetModelsDir(dir);
+    }
+    else if (mDownloadRect.Contains(x, y))
+    {
+      // "re-check" also runs the downloader: it skips files already complete and repairs the rest.
+      if (mPlugin.Downloading()) mPlugin.CancelModelDownload();
+      else mPlugin.StartModelDownload();
     }
     else if (mResidentRect.Contains(x, y)) mPlugin.SetKeepResident(!mPlugin.KeepResident());
     else if (mReleaseRect.Contains(x, y) && !mPlugin.Busy()) mPlugin.ReleaseModels();
     else
     {
-      static const char* tiers[] = {"F16", "Q8_0", "Q5_K_M"};
-      for (int i = 0; i < 3; ++i)
-        if (mEncodingRects[(size_t)i].Contains(x, y)) mPlugin.SetEncoding(tiers[i]);
+      const auto& tiers = keybed::ModelTiers();
+      for (size_t i = 0; i < tiers.size() && i < mEncodingRects.size() && !mPlugin.Downloading(); ++i)
+        if (mEncodingRects[i].Contains(x, y)) mPlugin.SetEncoding(tiers[i]);
     }
     SetDirty(false);
     return;
@@ -705,7 +743,7 @@ void KeybedControl::OnMouseDown(float x, float y, const IMouseMod& mod)
   }
   if (mLoadKitRect.Contains(x, y))
   {
-    const std::string dir = PickDirectory(mPlugin.KitDir().empty() ? keybed::KitsDirectory() : mPlugin.KitDir());
+    const std::string dir = PickDirectory(keybed::KitsDirectory(), "Choose a kit folder");   // every kit side by side
     if (!dir.empty()) mPlugin.LoadKitFromFolder(dir);
     SetDirty(false);
     return;
@@ -932,15 +970,65 @@ void KeybedControl::OnPopupMenuSelection(IPopupMenu* pMenu, int valIdx)
   SetDirty(false);
 }
 
-std::string KeybedControl::PickDirectory(const std::string& seed)
+std::string KeybedControl::PickDirectory(const std::string& start, const char* title)
 {
   if (!GetUI())
     return {};
-  WDL_String dir;
-  if (!seed.empty())
-    dir.Set(seed.c_str());
+#if defined(OS_WIN)
+  // iPlug2's Windows prompt (SHBrowseForFolder) ignores the starting folder and opens at the top of
+  // the machine; the shell's folder dialog opens where we point it.
+  namespace fs = std::filesystem;
+  std::string picked;
+  const HRESULT init = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+  IFileOpenDialog* dialog = nullptr;
+  if (SUCCEEDED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog))))
+  {
+    DWORD options = 0;
+    dialog->GetOptions(&options);
+    dialog->SetOptions(options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
+    const int titleChars = MultiByteToWideChar(CP_UTF8, 0, title, -1, nullptr, 0);
+    std::wstring wideTitle((size_t)std::max(0, titleChars), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, title, -1, wideTitle.data(), titleChars);
+    dialog->SetTitle(wideTitle.c_str());
+
+    std::error_code ec;
+    fs::path folder = fs::u8path(start);
+    while (!folder.empty() && !fs::is_directory(folder, ec) && folder.has_parent_path() && folder.parent_path() != folder)
+      folder = folder.parent_path();
+    IShellItem* item = nullptr;
+    if (!folder.empty() && fs::is_directory(folder, ec) &&
+        SUCCEEDED(SHCreateItemFromParsingName(fs::absolute(folder, ec).wstring().c_str(), nullptr, IID_PPV_ARGS(&item))))
+    {
+      dialog->SetFolder(item);
+      item->Release();
+    }
+    if (SUCCEEDED(dialog->Show((HWND)GetUI()->GetWindow())))
+    {
+      IShellItem* result = nullptr;
+      if (SUCCEEDED(dialog->GetResult(&result)))
+      {
+        PWSTR path = nullptr;
+        if (SUCCEEDED(result->GetDisplayName(SIGDN_FILESYSPATH, &path)))
+        {
+          const auto utf8 = fs::path(path).u8string();
+          picked.assign(utf8.begin(), utf8.end());
+          CoTaskMemFree(path);
+        }
+        result->Release();
+      }
+    }
+    dialog->Release();
+  }
+  if (SUCCEEDED(init))
+    CoUninitialize();
+  GetUI()->ReleaseMouseCapture();
+  return picked;
+#else
+  (void)title;
+  WDL_String dir(start.c_str());
   GetUI()->PromptForDirectory(dir);
   return dir.GetLength() > 0 ? std::string(dir.Get()) : std::string();
+#endif
 }
 
 // ---------------------------------------------------------------------------------------------------

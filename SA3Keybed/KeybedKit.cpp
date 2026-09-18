@@ -211,6 +211,17 @@ std::string KitsDirectory()
   return ec ? std::string() : Utf8FromPath(dir);
 }
 
+std::string DefaultModelsDirectory()
+{
+  const std::string app = AppDirectory();
+  if (app.empty())
+    return {};
+  const fs::path dir = PathFromUtf8(app) / "models";
+  std::error_code ec;
+  fs::create_directories(dir, ec);
+  return ec ? std::string() : Utf8FromPath(dir);
+}
+
 std::string CreateKitDirectory(const std::string& descriptor, uint64_t seed)
 {
   const std::string kits = KitsDirectory();

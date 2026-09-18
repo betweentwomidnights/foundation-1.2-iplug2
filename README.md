@@ -59,16 +59,27 @@ Formats: VST3, CLAP, and a standalone app.
 
 ## Models
 
-Point settings at a folder containing, for one tier (F16, Q8_0, or Q5_K_M):
+Open settings, pick a tier, and press **download**:
 
-- `foundation-1.2-keybeds-dit-1.1B-v1.0-<tier>.gguf`
-- `t5-base-encoder-128tok-0.1B-v1.0-<tier>.gguf`
-- `stable-audio-open-oobleck-v1.0-<tier>.gguf`
+| tier | size | |
+|---|---|---|
+| F16 | 2.5 GB | reference quality |
+| Q8_0 | 1.4 GB | |
+| Q5_K_M | 1.0 GB | |
+| Q4_K_M | 0.9 GB | smallest; fastest to load |
 
-Download them from [thepatch/foundation-1.2-keybeds-GGUF](https://huggingface.co/thepatch/foundation-1.2-keybeds-GGUF),
-or convert the DiT yourself with `sa3.cpp/tools/convert_sat_dit.py` (see
-`sa3.cpp/docs/STABLE_AUDIO_OPEN_1.md`); the T5 and Oobleck files are Foundation-1's. The build defaults to
-`../sa3.cpp/models/publication-stage-sat/foundation-1.2-keybeds-GGUF`.
+The three files of a tier (`foundation-1.2-keybeds-dit-1.1B-v1.0-<tier>.gguf`,
+`t5-base-encoder-128tok-0.1B-v1.0-<tier>.gguf`, `stable-audio-open-oobleck-v1.0-<tier>.gguf`) come from
+[thepatch/foundation-1.2-keybeds-GGUF](https://huggingface.co/thepatch/foundation-1.2-keybeds-GGUF) via
+the system curl (Windows 10+, macOS). Each downloads to a `.part` file that resumes after a cancel or
+a crash and is renamed only once its size matches Hugging Face's, so a partial file is never loaded;
+files already present are skipped. Downloads land in the models folder shown in settings, which
+defaults to `Documents/sa3-keybed/models` (or the sa3.cpp staging folder below, when it has the models).
+
+You can also point settings at any folder that already holds a tier, or convert the DiT yourself with
+`sa3.cpp/tools/convert_sat_dit.py` (see `sa3.cpp/docs/STABLE_AUDIO_OPEN_1.md`); the T5 and Oobleck files
+are Foundation-1's. A build next to sa3.cpp looks in
+`../sa3.cpp/models/publication-stage-sat/foundation-1.2-keybeds-GGUF` first.
 
 ## Test
 

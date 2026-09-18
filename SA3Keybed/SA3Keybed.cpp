@@ -187,6 +187,19 @@ void SA3Keybed::OnIdle()
   }
   InstallLoadedKit();
   mBank.CollectGarbage();
+  {
+    bool ok = false;
+    std::string dir, encoding, message;
+    if (mDownloader.TakeResult(ok, dir, encoding, message))
+    {
+      if (ok)
+      {
+        SetModelsDir(dir);
+        SetEncoding(encoding);
+      }
+      SetStatus(message, !ok);
+    }
+  }
 
 #if IPLUG_EDITOR
   if (auto* ui = GetUI())
@@ -362,15 +375,19 @@ void SA3Keybed::SetPreviewRootLabel(int midi)
 
 void SA3Keybed::LoadGlobalSettings()
 {
-  mModelsDir = keybed::LoadSetting("models_dir");
-  if (mModelsDir.empty())
-  {
-    const char* env = std::getenv("SA3_KEYBED_MODELS_DIR");
-    mModelsDir = env && *env ? env : SA3_KEYBED_DEFAULT_MODELS_DIR;
-  }
   const std::string encoding = keybed::LoadSetting("encoding");
   if (!encoding.empty())
     mEncoding = encoding;
+  mModelsDir = keybed::LoadSetting("models_dir");
+  if (mModelsDir.empty())
+  {
+    // A build next to an sa3.cpp checkout finds its staged models; everyone else gets
+    // Documents/sa3-keybed/models, where the settings page downloads them.
+    const char* env = std::getenv("SA3_KEYBED_MODELS_DIR");
+    mModelsDir = env && *env ? env : SA3_KEYBED_DEFAULT_MODELS_DIR;
+    if (!ModelsReady())
+      mModelsDir = keybed::DefaultModelsDirectory();
+  }
   const std::string resident = keybed::LoadSetting("keep_resident");
   if (!resident.empty())
     mKeepResident = resident != "0";
@@ -410,6 +427,26 @@ bool SA3Keybed::ModelsReady(std::string* missing) const
   if (!ok && missing)
     *missing = error;
   return ok;
+}
+
+bool SA3Keybed::TierPresent(const std::string& encoding) const
+{
+  sa3::sat::PipelinePaths paths;
+  return sa3::sat::resolve_sat_large_model(mModelsDir, kVariant, encoding, encoding, encoding, &paths, nullptr);
+}
+
+bool SA3Keybed::StartModelDownload()
+{
+  std::string dir = mModelsDir;
+  if (dir.empty())
+    dir = keybed::DefaultModelsDirectory();
+  std::string error;
+  if (!mDownloader.Start(dir, mEncoding, error))
+  {
+    SetStatus(error, true);
+    return false;
+  }
+  return true;
 }
 
 bool SA3Keybed::StartPreview()
