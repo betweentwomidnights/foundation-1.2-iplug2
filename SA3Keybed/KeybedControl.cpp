@@ -1435,11 +1435,13 @@ float KeybedControl::DrawLayerTabs(IGraphics& g, float left, float right, float 
     mSheetHits.push_back({add, SheetAction::AddLayer, 0});
     if (count == 1)
       g.DrawText(Label(10.f, TextFaint()), "stack support sounds", IRECT(add.R + 4.f, y, right, y + 24.f));
+    x = add.R;
   }
   if (mPlugin.EditLayer() > 0)
   {
-    const IRECT remove(right - 60.f, y, right, y + 24.f);
-    g.DrawText(Label(11.f, Red(), EAlign::Far), "- remove", remove);   // pairs with "+ layer"
+    // Beside "+ layer" (or the last tab once all three exist), grey like the sheet's other removes.
+    const IRECT remove(x, y, x + 64.f, y + 24.f);
+    g.DrawText(Label(11.f, TextDim(), EAlign::Center), "- remove", remove);
     mSheetHits.push_back({remove, SheetAction::RemoveLayer, mPlugin.EditLayer()});
   }
   return y + 32.f;
