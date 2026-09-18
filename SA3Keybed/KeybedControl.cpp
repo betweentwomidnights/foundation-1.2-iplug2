@@ -387,7 +387,15 @@ float KeybedControl::DrawNoteWaveform(IGraphics& g, float left, float right, flo
 float KeybedControl::DrawSound(IGraphics& g, float left, float right, float y)
 {
   g.DrawText(Label(12.f, TextDim()), "playback", IRECT(left, y, left + 80.f, y + 16.f));
-  y += 18.f;
+  // poly | mono: mono plays one key at a time (the last one pressed) and returns to a held key
+  const int mode = mPlugin.GetParam(kParamVoiceMode)->Int();
+  static const char* const modes[] = {"poly", "mono"};
+  for (int i = 0; i < 2; ++i)
+  {
+    mVoiceModeRects[(size_t)i] = IRECT(right - 104.f + i * 54.f, y - 3.f, right - 54.f + i * 54.f, y + 17.f);
+    DrawTab(g, mVoiceModeRects[(size_t)i], modes[i], kFont, mode == i);
+  }
+  y += 22.f;
   static const std::pair<int, const char*> sliders[] = {
     {kParamGain, "gain"}, {kParamAttack, "attack"}, {kParamDecay, "decay"}, {kParamSustain, "sustain"},
     {kParamRelease, "release"}, {kParamVelocity, "velocity"}, {kParamTune, "tune"},
@@ -712,6 +720,15 @@ void KeybedControl::OnMouseDown(float x, float y, const IMouseMod& mod)
   };
   if (mOctaveDownRect.Contains(x, y)) { stepOctave(-1); SetDirty(false); return; }
   if (mOctaveUpRect.Contains(x, y)) { stepOctave(1); SetDirty(false); return; }
+  for (int i = 0; i < 2; ++i)
+    if (mVoiceModeRects[(size_t)i].Contains(x, y))
+    {
+      mPlugin.BeginInformHostOfParamChangeFromUI(kParamVoiceMode);
+      mPlugin.SendParameterValueFromUI(kParamVoiceMode, mPlugin.GetParam(kParamVoiceMode)->ToNormalized(i));
+      mPlugin.EndInformHostOfParamChangeFromUI(kParamVoiceMode);
+      SetDirty(false);
+      return;
+    }
   if (mFillGapsRect.Contains(x, y))
   {
     const bool next = !mPlugin.GetParam(kParamFillGaps)->Bool();

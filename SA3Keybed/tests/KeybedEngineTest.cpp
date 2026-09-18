@@ -4,7 +4,8 @@
 // Usage: SA3KeybedEngineTest MODELS_DIR [STEPS] [ENCODING]
 // Renders a six-note sine preview, plays every key through the sampler at a 48 kHz host rate, and
 // checks each output's pitch against its MIDI key (Goertzel energy at f vs f/2, 2f, and +-1 semitone).
-// Then checks gap filling, the octave parameter, kit reload from disk, a three-layer keybed, and cancel.
+// Then checks gap filling, the octave parameter, mono/poly, kit reload from disk, a three-layer keybed,
+// and cancel.
 #include "KeybedKit.h"
 #include "KeybedRenderService.h"
 #include "KeybedSampler.h"
@@ -122,6 +123,32 @@ std::vector<double> Play(KeybedEngine& engine, KeybedBank& bank, int key, double
   return std::vector<double>(mono.begin() + (long)std::min(skip, mono.size()), mono.end());
 }
 
+// Runs the engine for `seconds` with whatever is held and returns the mono mix.
+std::vector<double> Run(KeybedEngine& engine, KeybedBank& bank, double seconds, double hostRate)
+{
+  const int block = 256;
+  std::vector<sample> left(block), right(block);
+  sample* outputs[2] = {left.data(), right.data()};
+  std::vector<double> mono;
+  for (int done = 0; done < (int)(seconds * hostRate); done += block)
+  {
+    engine.ProcessBlock(outputs, block, bank);
+    for (int i = 0; i < block; ++i)
+      mono.push_back(0.5 * (left[(size_t)i] + right[(size_t)i]));
+  }
+  return mono;
+}
+
+void Key(KeybedEngine& engine, int key, bool on)
+{
+  IMidiMsg msg;
+  if (on)
+    msg.MakeNoteOnMsg(key, 127, 0);
+  else
+    msg.MakeNoteOffMsg(key, 0);
+  engine.ProcessMidiMsg(msg);
+}
+
 double Rms(const std::vector<double>& x)
 {
   double e = 0.0;
@@ -196,6 +223,41 @@ int main(int argc, char** argv)
     out = Play(engine, bank, gapKey, 0.5, hostRate);
     Check(Rms(out) < 1e-6, "fill gaps off leaves A3 silent");
     engine.settings.fillGaps.store(true);
+  }
+
+  std::printf("3b. mono and poly\n");
+  {
+    // Energy at a key's fundamental over the last two thirds of a capture (after any crossfade).
+    const auto energy = [&](const std::vector<double>& x, int key) {
+      const std::vector<double> tail(x.begin() + (long)(x.size() / 3), x.end());
+      return Goertzel(tail, hostRate, KeyHz(key));
+    };
+    const double single = Rms(Play(engine, bank, 64, 0.6, hostRate));
+    engine.settings.mono.store(true);
+    Key(engine, 60, true);
+    Run(engine, bank, 0.3, hostRate);
+    Key(engine, 64, true);   // C4 still held
+    auto out = Run(engine, bank, 0.6, hostRate);
+    Check(energy(out, 64) > 100.0 * energy(out, 60), "mono: holding C4 and pressing E4 plays only E4");
+    const double monoLevel = Rms(std::vector<double>(out.begin() + (long)(out.size() / 3), out.end()));
+    Check(monoLevel < 1.5 * single, "mono: one voice, not a stack (" + std::to_string(monoLevel / single) + "x a single note)");
+    Key(engine, 64, false);  // back to the key still held
+    out = Run(engine, bank, 0.6, hostRate);
+    Check(energy(out, 60) > 100.0 * energy(out, 64), "mono: releasing E4 returns to the held C4");
+    Key(engine, 60, false);
+    Run(engine, bank, 0.6, hostRate);
+    out = Run(engine, bank, 0.2, hostRate);
+    Check(Rms(out) < 1e-6, "mono: silent once every key is up");
+
+    engine.settings.mono.store(false);
+    Key(engine, 60, true);
+    Key(engine, 64, true);
+    out = Run(engine, bank, 0.6, hostRate);
+    const double c = energy(out, 60), e = energy(out, 64);
+    Check(c > 0.05 * e && e > 0.05 * c, "poly: C4 and E4 sound together");
+    Key(engine, 60, false);
+    Key(engine, 64, false);
+    Run(engine, bank, 0.6, hostRate);
   }
 
   std::printf("4. reload the kit from disk\n");

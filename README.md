@@ -18,7 +18,9 @@ Foundation-1.2 Keybeds renders chromatic runs: six notes, 3.0 s each with 0.25 s
 
 The model renders one octave below its prompt labels, so keys are mapped by sounding pitch:
 MIDI 60 plays middle C. The default C2-B5 keyboard therefore covers C1-B4, and the octave control
-shifts it. Keys without a sample borrow the nearest one and repitch it ("fill gaps").
+shifts it. Keys without a sample borrow the nearest one and repitch it ("fill gaps"). Playback is
+poly (32 voices) or mono: one key at a time, last-note priority, returning to a key still held, with a
+20 ms crossfade between notes.
 
 Every render is saved under `Documents/sa3-keybed/kits/<time>-<name>-<seed>/`: one 32-bit float WAV
 per key, the raw chunks, `kit.json`, and a `kit.sfz` for other samplers. The plugin state stores the
@@ -74,18 +76,21 @@ The three files of a tier (`foundation-1.2-keybeds-dit-1.1B-v1.0-<tier>.gguf`,
 the system curl (Windows 10+, macOS). Each downloads to a `.part` file that resumes after a cancel or
 a crash and is renamed only once its size matches Hugging Face's, so a partial file is never loaded;
 files already present are skipped. Downloads land in the models folder shown in settings, which
-defaults to `Documents/sa3-keybed/models` (or the sa3.cpp staging folder below, when it has the models).
+defaults to per-user app data rather than Documents (often cloud-synced):
+`%LOCALAPPDATA%\sa3-keybed\models` on Windows, `~/Library/Application Support/sa3-keybed/models` on macOS.
+`SA3_KEYBED_MODELS_DIR` overrides it.
 
 You can also point settings at any folder that already holds a tier, or convert the DiT yourself with
 `sa3.cpp/tools/convert_sat_dit.py` (see `sa3.cpp/docs/STABLE_AUDIO_OPEN_1.md`); the T5 and Oobleck files
-are Foundation-1's. A build next to sa3.cpp looks in
-`../sa3.cpp/models/publication-stage-sat/foundation-1.2-keybeds-GGUF` first.
+are Foundation-1's. Dev builds also look in
+`../sa3.cpp/models/publication-stage-sat/foundation-1.2-keybeds-GGUF`; configure release builds with
+`-DSA3_KEYBED_DEV_MODELS=OFF` so no build-machine path ships in the binary.
 
 ## Test
 
 - `build/out-test/Release/SA3KeybedEngineTest.exe <models dir> [steps]` renders a sine preview
   through libsa3, plays every key through the sampler at 48 kHz and checks its pitch, then checks gap
-  filling, octave shift, kit reload, a three-layer keybed (seeds, folders, mix), and cancel.
+  filling, octave shift, mono/poly, kit reload, a three-layer keybed (seeds, folders, mix), and cancel.
 - VST3 validator: 47 passed, 0 failed.
 
 The Foundation-1.2 weights are under the Stability AI Community License.

@@ -50,7 +50,9 @@ struct KitManifest
 // Documents/sa3-keybed (created on demand); empty on failure.
 std::string AppDirectory();
 std::string KitsDirectory();
-std::string DefaultModelsDirectory();   // AppDirectory()/models, where downloads land by default
+// Where downloads land by default: per-user app data, not Documents (often cloud-synced), since a tier
+// is 0.9-2.5 GB. %LOCALAPPDATA%/sa3-keybed/models; ~/Library/Application Support/sa3-keybed/models.
+std::string DefaultModelsDirectory();
 std::string CreateKitDirectory(const std::string& descriptor, uint64_t seed);
 
 // Small persisted preferences in AppDirectory()/settings.txt ("key=value" lines).

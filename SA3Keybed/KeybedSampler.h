@@ -158,6 +158,7 @@ struct SamplerSettings
   std::atomic<double> tuneSemitones{0.};
   std::atomic<int> octave{0};
   std::atomic<bool> fillGaps{true};
+  std::atomic<bool> mono{false};   // one voice, last-note priority, returns to a still-held key
   std::atomic<uint32_t> envelopeVersion{1};
   // RC's tri-layer volumes; used only for a layered kit, under RC's master level.
   std::array<std::atomic<double>, kMaxLayers> layerVolume{{{0.90}, {0.60}, {0.35}}};
@@ -233,14 +234,20 @@ public:
   {
     for (int i = 0; i < kVoices; ++i)
       mSynth.AddVoice(new KeybedVoice(*this), 0);
+    // iPlug's mono mode triggers every voice in the zone (a unison stack), so mono gets its own synth
+    // with exactly one voice.
+    mMonoSynth.AddVoice(new KeybedVoice(*this), 0);
     for (auto& held : mHeld)
       held.store(false, std::memory_order_relaxed);
   }
 
   void Reset(double sampleRate, int blockSize)
   {
-    mSynth.SetSampleRateAndBlockSize(sampleRate, blockSize);
-    mSynth.Reset();
+    for (MidiSynth* synth : {&mSynth, &mMonoSynth})
+    {
+      synth->SetSampleRateAndBlockSize(sampleRate, blockSize);
+      synth->Reset();
+    }
   }
 
   void ProcessMidiMsg(const IMidiMsg& msg)
@@ -253,7 +260,15 @@ public:
     }
     else if (status == IMidiMsg::kNoteOff || status == IMidiMsg::kNoteOn)
       mHeld[(size_t)msg.NoteNumber()].store(false, std::memory_order_relaxed);
-    mSynth.AddMidiMsgToQueue(msg);
+    // Note-ons go to the current mode's synth; everything else (note-offs, pedal, bend) to both, so a
+    // mode switch never strands a held note.
+    if (status == IMidiMsg::kNoteOn && msg.Velocity() > 0)
+      (settings.mono.load(std::memory_order_relaxed) ? mMonoSynth : mSynth).AddMidiMsgToQueue(msg);
+    else
+    {
+      mSynth.AddMidiMsgToQueue(msg);
+      mMonoSynth.AddMidiMsgToQueue(msg);
+    }
   }
 
   void ProcessBlock(sample** outputs, int nFrames, KeybedBank& bank)
@@ -261,7 +276,8 @@ public:
     for (int c = 0; c < 2; ++c)
       std::memset(outputs[c], 0, (size_t)nFrames * sizeof(sample));
     mBlockBank = bank.Acquire();
-    mSynth.ProcessBlock(nullptr, outputs, 0, 2, nFrames);
+    mSynth.ProcessBlock(nullptr, outputs, 0, 2, nFrames);       // voices accumulate into outputs
+    mMonoSynth.ProcessBlock(nullptr, outputs, 0, 2, nFrames);
     const sample target = (sample)settings.gain.load(std::memory_order_relaxed);
     for (int s = 0; s < nFrames; ++s)
     {
@@ -279,6 +295,7 @@ public:
 private:
   friend class KeybedVoice;
   MidiSynth mSynth{VoiceAllocator::kPolyModePoly, MidiSynth::kDefaultBlockSize};
+  MidiSynth mMonoSynth{VoiceAllocator::kPolyModeMono, MidiSynth::kDefaultBlockSize};
   const BankSnapshot* mBlockBank = nullptr;   // audio thread only
   sample mSmoothedGain = 0.8;
   std::array<std::atomic<bool>, 128> mHeld;
@@ -327,7 +344,10 @@ inline void KeybedVoice::Trigger(double level, bool isRetrigger)
   bool playing = false;
   for (const auto& layer : mLayers)
     playing = playing || layer.sample;
-  if (isRetrigger && playing)
+  // A sounding voice that is triggered again (a mono note change, or a poly steal; iPlug passes
+  // isRetrigger=false for both) fades out over 20 ms before its new samples start, instead of clicking.
+  (void)isRetrigger;
+  if (playing && mEnv.GetBusy())
     mEnv.Retrigger(gain);   // StartPending runs when the steal fade reaches zero
   else
   {

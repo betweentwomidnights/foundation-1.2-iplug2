@@ -213,10 +213,23 @@ std::string KitsDirectory()
 
 std::string DefaultModelsDirectory()
 {
-  const std::string app = AppDirectory();
-  if (app.empty())
+  fs::path root;
+#ifdef _WIN32
+  PWSTR raw = nullptr;
+  if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &raw)) && raw)
+    root = fs::path(raw);
+  if (raw)
+    CoTaskMemFree(raw);
+#elif defined(__APPLE__)
+  if (const char* home = std::getenv("HOME"))
+    root = fs::path(home) / "Library" / "Application Support";
+#else
+  if (const char* home = std::getenv("HOME"))
+    root = fs::path(home) / ".local" / "share";
+#endif
+  if (root.empty())
     return {};
-  const fs::path dir = PathFromUtf8(app) / "models";
+  const fs::path dir = root / "sa3-keybed" / "models";
   std::error_code ec;
   fs::create_directories(dir, ec);
   return ec ? std::string() : Utf8FromPath(dir);

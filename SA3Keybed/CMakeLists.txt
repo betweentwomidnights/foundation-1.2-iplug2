@@ -1,6 +1,15 @@
 cmake_minimum_required(VERSION 3.20)
 project(SA3Keybed VERSION 0.1.0)
 
+# Dev builds also look for models in the sa3.cpp checkout's staging folder. Release builds turn this
+# off so no build-machine path ships in the binary: -DSA3_KEYBED_DEV_MODELS=OFF.
+option(SA3_KEYBED_DEV_MODELS "Look for models in ../sa3.cpp's staging folder" ON)
+set(SA3_KEYBED_DEV_DEFINES)
+if(SA3_KEYBED_DEV_MODELS)
+  list(APPEND SA3_KEYBED_DEV_DEFINES
+    SA3_KEYBED_DEV_MODELS_DIR="${SA3_CPP_DIR}/models/publication-stage-sat/foundation-1.2-keybeds-GGUF")
+endif()
+
 set(SA3_KEYBED_PLATFORM_LIBS)
 if(WIN32)
   list(APPEND SA3_KEYBED_PLATFORM_LIBS shell32 ole32)
@@ -31,7 +40,7 @@ iplug_add_plugin(${PROJECT_NAME}
     sa3_ui_theme
     ${SA3_KEYBED_PLATFORM_LIBS}
   DEFINES
-    SA3_KEYBED_DEFAULT_MODELS_DIR="${SA3_CPP_DIR}/models/publication-stage-sat/foundation-1.2-keybeds-GGUF"
+    ${SA3_KEYBED_DEV_DEFINES}
   FORMATS APP VST3 CLAP
 )
 

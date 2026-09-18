@@ -32,6 +32,7 @@ enum EParams
   kParamLayerMain,       // layered keybeds: per-layer volume (RC's tri-layer mixer)
   kParamLayerSupport1,
   kParamLayerSupport2,
+  kParamVoiceMode,       // poly / mono (appended: host automation indices stay put)
   kNumParams
 };
 

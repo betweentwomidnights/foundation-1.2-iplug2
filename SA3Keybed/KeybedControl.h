@@ -139,6 +139,7 @@ private:
   IRECT mBuildRect, mKeyboardRect;
   std::vector<ParamSlider> mParamSliders;
   IRECT mOctaveDownRect, mOctaveUpRect, mFillGapsRect;
+  std::array<IRECT, 2> mVoiceModeRects{};
   IRECT mRevealKitRect, mLoadKitRect, mKitLabelRect, mWaveformRect;
   IRECT mModelsFolderRect, mResidentRect, mReleaseRect, mCloseRect;
   std::array<IRECT, 4> mEncodingRects{};

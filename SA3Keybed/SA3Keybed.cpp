@@ -16,16 +16,16 @@
 #include <filesystem>
 #include <random>
 
-#ifndef SA3_KEYBED_DEFAULT_MODELS_DIR
-#define SA3_KEYBED_DEFAULT_MODELS_DIR "models"
-#endif
 
 namespace kb = sa3::sat::keybed;
 
 namespace
 {
 constexpr uint32_t kStateMagic = 0x53334B42u;   // "S3KB"
-constexpr uint32_t kStateVersion = 4u;   // 4: layers; 3: structured sound + locks; 2: FX tag list; 1: FX index
+constexpr uint32_t kStateVersion = 5u;   // 5: param count; 4: layers; 3: structured sound + locks; 2: FX tags; 1: FX index
+// Params each state version saved, for versions that did not store the count.
+constexpr int32_t kParamsInV3 = 9;    // gain .. fill gaps
+constexpr int32_t kParamsInV4 = 12;   // + three layer volumes
 constexpr const char* kVariant = "foundation-1.2-keybeds";
 
 const char* RangeLabel(SA3Keybed::RangeChoice range)
@@ -57,6 +57,7 @@ SA3Keybed::SA3Keybed(const InstanceInfo& info)
   for (int l = 0; l < kb::kLayerCount; ++l)
     GetParam(kParamLayerMain + l)->InitDouble(layerNames[l], kb::kLayerDefaultVolumes[l] * 100., 0., 100., 0.1, "%",
                                               IParam::kFlagsNone, "Layers");
+  GetParam(kParamVoiceMode)->InitEnum("Voice Mode", 0, {"Poly", "Mono"});
 
   LoadGlobalSettings();
 
@@ -132,6 +133,7 @@ void SA3Keybed::OnParamChange(int paramIdx)
     case kParamLayerMain:
     case kParamLayerSupport1:
     case kParamLayerSupport2: s.layerVolume[(size_t)(paramIdx - kParamLayerMain)].store(value / 100.); break;
+    case kParamVoiceMode: s.mono.store(GetParam(paramIdx)->Int() == 1); break;
     default: break;
   }
 }
@@ -381,11 +383,16 @@ void SA3Keybed::LoadGlobalSettings()
   mModelsDir = keybed::LoadSetting("models_dir");
   if (mModelsDir.empty())
   {
-    // A build next to an sa3.cpp checkout finds its staged models; everyone else gets
-    // Documents/sa3-keybed/models, where the settings page downloads them.
+    // An explicit SA3_KEYBED_MODELS_DIR, then (dev builds) the sa3.cpp checkout's staged models;
+    // otherwise the per-user models folder the settings page downloads into.
     const char* env = std::getenv("SA3_KEYBED_MODELS_DIR");
-    mModelsDir = env && *env ? env : SA3_KEYBED_DEFAULT_MODELS_DIR;
-    if (!ModelsReady())
+    if (env && *env)
+      mModelsDir = env;
+#ifdef SA3_KEYBED_DEV_MODELS_DIR
+    if (mModelsDir.empty() || !ModelsReady())
+      mModelsDir = SA3_KEYBED_DEV_MODELS_DIR;
+#endif
+    if (mModelsDir.empty() || !ModelsReady())
       mModelsDir = keybed::DefaultModelsDirectory();
   }
   const std::string resident = keybed::LoadSetting("keep_resident");
@@ -699,6 +706,8 @@ bool SA3Keybed::SerializeState(IByteChunk& chunk) const
   chunk.Put(&root);
   chunk.Put(&range);
   chunk.PutStr(mKitDir.c_str());
+  const int32_t paramCount = NParams();
+  chunk.Put(&paramCount);
   return SerializeParams(chunk);
 }
 
@@ -794,6 +803,9 @@ int SA3Keybed::UnserializeState(const IByteChunk& chunk, int startPos)
   pos = chunk.Get(&range, pos);
   pos = chunk.GetStr(text, pos);
   const std::string kitDir = text.Get();
+  int32_t paramCount = version >= 4u ? kParamsInV4 : kParamsInV3;
+  if (version >= 5u)
+    pos = chunk.Get(&paramCount, pos);
   if (pos < 0)
     return pos;
 
@@ -821,5 +833,17 @@ int SA3Keybed::UnserializeState(const IByteChunk& chunk, int startPos)
       SetStatus("saved kit folder is missing: " + kitDir, true);
     mKitDir = kitDir;
   }
-  return UnserializeParams(chunk, pos);
+  // Read exactly the params that were saved: params added since keep their defaults, and an older
+  // project does not read past its end (which iPlug's UnserializeParams reports as a failed load).
+  ENTER_PARAMS_MUTEX
+  for (int32_t i = 0; i < paramCount && pos >= 0; ++i)
+  {
+    double value = 0.;
+    pos = chunk.Get(&value, pos);
+    if (pos >= 0 && i < NParams())
+      GetParam(i)->Set(value);
+  }
+  OnParamReset(kPresetRecall);
+  LEAVE_PARAMS_MUTEX
+  return pos;
 }
