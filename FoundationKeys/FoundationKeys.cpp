@@ -1,4 +1,4 @@
-#include "SA3Keybed.h"
+#include "FoundationKeys.h"
 #include "IPlug_include_in_plug_src.h"
 
 #if IPLUG_EDITOR
@@ -27,19 +27,19 @@ constexpr int32_t kParamsInV3 = 9;    // gain .. fill gaps
 constexpr int32_t kParamsInV4 = 12;   // + three layer volumes
 constexpr const char* kVariant = "foundation-1.2-keybeds";
 
-const char* RangeLabel(SA3Keybed::RangeChoice range)
+const char* RangeLabel(FoundationKeys::RangeChoice range)
 {
   switch (range)
   {
-    case SA3Keybed::RangeChoice::C2ToB5: return "C2-B5";
-    case SA3Keybed::RangeChoice::C2ToF6: return "C2-F6";
-    case SA3Keybed::RangeChoice::C2ToB6: return "C2-B6";
+    case FoundationKeys::RangeChoice::C2ToB5: return "C2-B5";
+    case FoundationKeys::RangeChoice::C2ToF6: return "C2-F6";
+    case FoundationKeys::RangeChoice::C2ToB6: return "C2-B6";
   }
   return "C2-B5";
 }
 } // namespace
 
-SA3Keybed::SA3Keybed(const InstanceInfo& info)
+FoundationKeys::FoundationKeys(const InstanceInfo& info)
 : iplug::Plugin(info, MakeConfig(kNumParams, kNumPresets))
 {
   GetParam(kParamGain)->InitDouble("Gain", 100., 0., 100., 0.1, "%");   // on top of the sampler's -12 dB headroom
@@ -79,7 +79,7 @@ SA3Keybed::SA3Keybed(const InstanceInfo& info)
 #endif
 }
 
-SA3Keybed::~SA3Keybed()
+FoundationKeys::~FoundationKeys()
 {
   mRender.Cancel();
   if (mKitLoader.joinable())
@@ -87,12 +87,12 @@ SA3Keybed::~SA3Keybed()
 }
 
 #if IPLUG_DSP
-void SA3Keybed::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
+void FoundationKeys::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
 {
   mEngine.ProcessBlock(outputs, nFrames, mBank);
 }
 
-void SA3Keybed::ProcessMidiMsg(const IMidiMsg& msg)
+void FoundationKeys::ProcessMidiMsg(const IMidiMsg& msg)
 {
   switch (msg.StatusMsg())
   {
@@ -109,12 +109,12 @@ void SA3Keybed::ProcessMidiMsg(const IMidiMsg& msg)
   }
 }
 
-void SA3Keybed::OnReset()
+void FoundationKeys::OnReset()
 {
   mEngine.Reset(GetSampleRate(), GetBlockSize());
 }
 
-void SA3Keybed::OnParamChange(int paramIdx)
+void FoundationKeys::OnParamChange(int paramIdx)
 {
   auto& s = mEngine.settings;
   const double value = GetParam(paramIdx)->Value();
@@ -138,7 +138,7 @@ void SA3Keybed::OnParamChange(int paramIdx)
 }
 #endif
 
-void SA3Keybed::OnIdle()
+void FoundationKeys::OnIdle()
 {
   std::vector<keybed::NoteSamplePtr> arrived;
   for (auto& event : mRender.DrainEvents())
@@ -209,7 +209,7 @@ void SA3Keybed::OnIdle()
 #endif
 }
 
-kb::SoundSpec SA3Keybed::Sound() const
+kb::SoundSpec FoundationKeys::Sound() const
 {
   kb::SoundSpec sound = mLayers[(size_t)mEditLayer];
   sound.wet = mLayers[0].wet;   // render fx is shared: every layer shows main's
@@ -217,7 +217,7 @@ kb::SoundSpec SA3Keybed::Sound() const
   return sound;
 }
 
-void SA3Keybed::SetSound(kb::SoundSpec sound)
+void FoundationKeys::SetSound(kb::SoundSpec sound)
 {
   const int layer = std::clamp(mEditLayer, 0, mLayerCount - 1);
   mLayers[0].wet = sound.wet;
@@ -230,7 +230,7 @@ void SA3Keybed::SetSound(kb::SoundSpec sound)
   }
 }
 
-void SA3Keybed::AddLayer()
+void FoundationKeys::AddLayer()
 {
   if (mLayerCount >= kb::kLayerCount)
     return;
@@ -245,7 +245,7 @@ void SA3Keybed::AddLayer()
   mEditLayer = layer;
 }
 
-void SA3Keybed::RemoveLayer(int layer)
+void FoundationKeys::RemoveLayer(int layer)
 {
   if (layer < 1 || layer >= mLayerCount)
     return;
@@ -256,7 +256,7 @@ void SA3Keybed::RemoveLayer(int layer)
   mEditLayer = std::min(mEditLayer, mLayerCount - 1);
 }
 
-std::string SA3Keybed::LayerSummary() const
+std::string FoundationKeys::LayerSummary() const
 {
   // Short enough for one line with both supports: "support 1: Pad, Rich  ·  support 2: Cello, Warm".
   std::string summary;
@@ -273,12 +273,12 @@ std::string SA3Keybed::LayerSummary() const
   return summary;
 }
 
-std::string SA3Keybed::Descriptor() const
+std::string FoundationKeys::Descriptor() const
 {
   return kb::descriptor_of(mLayers[0]);
 }
 
-std::string SA3Keybed::DescriptorBundle() const
+std::string FoundationKeys::DescriptorBundle() const
 {
   std::string bundle;
   for (int l = 0; l < mLayerCount; ++l)
@@ -286,7 +286,7 @@ std::string SA3Keybed::DescriptorBundle() const
   return bundle;
 }
 
-void SA3Keybed::SetDescriptor(const std::string& text)
+void FoundationKeys::SetDescriptor(const std::string& text)
 {
   // The main page's text field names the main layer.
   kb::SoundSpec sorted = kb::classify_descriptor(text);
@@ -308,7 +308,7 @@ void SA3Keybed::SetDescriptor(const std::string& text)
   mEditLayer = editing;
 }
 
-std::string SA3Keybed::FxLabel() const
+std::string FoundationKeys::FxLabel() const
 {
   std::string label;
   for (const auto& tag : mLayers[0].fx)
@@ -316,7 +316,7 @@ std::string SA3Keybed::FxLabel() const
   return label;
 }
 
-void SA3Keybed::ApplyRoll(int layer, const kb::SoundSpec& rolled)
+void FoundationKeys::ApplyRoll(int layer, const kb::SoundSpec& rolled)
 {
   kb::SoundSpec& sound = mLayers[(size_t)layer];
   if (!mLocks[kSectionInstrument])
@@ -338,7 +338,7 @@ void SA3Keybed::ApplyRoll(int layer, const kb::SoundSpec& rolled)
   sound.fx = mLayers[0].fx;
 }
 
-void SA3Keybed::RollSound()
+void FoundationKeys::RollSound()
 {
   std::random_device device;
   const uint64_t seed = ((uint64_t)device() << 32) ^ device();
@@ -348,7 +348,7 @@ void SA3Keybed::RollSound()
       mLayers[(size_t)l].fx = mLayers[0].fx;
 }
 
-void SA3Keybed::RollAll()
+void FoundationKeys::RollAll()
 {
   // RC's randomize_all_tri_layers: one base, and each layer rolls from its tri_prompt_n seed.
   std::random_device device;
@@ -359,37 +359,37 @@ void SA3Keybed::RollAll()
     mLayers[(size_t)l].fx = mLayers[0].fx;
 }
 
-void SA3Keybed::SetSteps(int steps)
+void FoundationKeys::SetSteps(int steps)
 {
   mSteps = std::clamp(steps, 2, 250);
 }
 
-void SA3Keybed::SetCfgScale(float cfg)
+void FoundationKeys::SetCfgScale(float cfg)
 {
   mCfgScale = std::clamp(cfg, 1.f, 12.f);
 }
 
-void SA3Keybed::SetPreviewRootLabel(int midi)
+void FoundationKeys::SetPreviewRootLabel(int midi)
 {
   mPreviewRootLabel = kb::clamp_preview_root(midi, mPreviewCount);
 }
 
-void SA3Keybed::LoadGlobalSettings()
+void FoundationKeys::LoadGlobalSettings()
 {
   const std::string encoding = keybed::LoadSetting("encoding");
   if (!encoding.empty())
     mEncoding = encoding;
-  mModelsDir = keybed::LoadSetting("models_dir");
+  mModelsDir = keybed::MigratedPath(keybed::LoadSetting("models_dir"));
   if (mModelsDir.empty())
   {
-    // An explicit SA3_KEYBED_MODELS_DIR, then (dev builds) the sa3.cpp checkout's staged models;
+    // An explicit FOUNDATION_KEYS_MODELS_DIR, then (dev builds) the sa3.cpp checkout's staged models;
     // otherwise the per-user models folder the settings page downloads into.
-    const char* env = std::getenv("SA3_KEYBED_MODELS_DIR");
+    const char* env = std::getenv("FOUNDATION_KEYS_MODELS_DIR");
     if (env && *env)
       mModelsDir = env;
-#ifdef SA3_KEYBED_DEV_MODELS_DIR
+#ifdef FOUNDATION_KEYS_DEV_MODELS_DIR
     if (mModelsDir.empty() || !ModelsReady())
-      mModelsDir = SA3_KEYBED_DEV_MODELS_DIR;
+      mModelsDir = FOUNDATION_KEYS_DEV_MODELS_DIR;
 #endif
     if (mModelsDir.empty() || !ModelsReady())
       mModelsDir = keybed::DefaultModelsDirectory();
@@ -402,7 +402,7 @@ void SA3Keybed::LoadGlobalSettings()
     mChunkSecondsAt80 = std::clamp(std::strtod(chunkSeconds.c_str(), nullptr), 1.0, 600.0);
 }
 
-void SA3Keybed::SetModelsDir(const std::string& dir)
+void FoundationKeys::SetModelsDir(const std::string& dir)
 {
   if (dir == mModelsDir)
     return;
@@ -411,13 +411,13 @@ void SA3Keybed::SetModelsDir(const std::string& dir)
   mRender.ReleaseModels();
 }
 
-void SA3Keybed::SetEncoding(const std::string& encoding)
+void FoundationKeys::SetEncoding(const std::string& encoding)
 {
   mEncoding = sa3::sat::normalize_encoding(encoding);
   keybed::SaveSetting("encoding", mEncoding);
 }
 
-void SA3Keybed::SetKeepResident(bool keep)
+void FoundationKeys::SetKeepResident(bool keep)
 {
   mKeepResident = keep;
   keybed::SaveSetting("keep_resident", keep ? "1" : "0");
@@ -425,7 +425,7 @@ void SA3Keybed::SetKeepResident(bool keep)
     mRender.ReleaseModels();
 }
 
-bool SA3Keybed::ModelsReady(std::string* missing) const
+bool FoundationKeys::ModelsReady(std::string* missing) const
 {
   sa3::sat::PipelinePaths paths;
   std::string error;
@@ -435,13 +435,13 @@ bool SA3Keybed::ModelsReady(std::string* missing) const
   return ok;
 }
 
-bool SA3Keybed::TierPresent(const std::string& encoding) const
+bool FoundationKeys::TierPresent(const std::string& encoding) const
 {
   sa3::sat::PipelinePaths paths;
   return sa3::sat::resolve_sat_large_model(mModelsDir, kVariant, encoding, encoding, encoding, &paths, nullptr);
 }
 
-bool SA3Keybed::StartModelDownload()
+bool FoundationKeys::StartModelDownload()
 {
   std::string dir = mModelsDir;
   if (dir.empty())
@@ -455,7 +455,7 @@ bool SA3Keybed::StartModelDownload()
   return true;
 }
 
-bool SA3Keybed::StartPreview()
+bool FoundationKeys::StartPreview()
 {
   const int root = kb::clamp_preview_root(mPreviewRootLabel, mPreviewCount);
   std::vector<kb::Chunk> chunks = kb::plan_preview(root, mPreviewCount);
@@ -464,7 +464,7 @@ bool SA3Keybed::StartPreview()
   return StartJob(std::move(chunks), std::move(label), true);
 }
 
-bool SA3Keybed::StartFullBuild()
+bool FoundationKeys::StartFullBuild()
 {
   kb::FullRange range = kb::FullRange::C2ToB5;
   if (mRange == RangeChoice::C2ToF6) range = kb::FullRange::C2ToF6;
@@ -472,7 +472,7 @@ bool SA3Keybed::StartFullBuild()
   return StartJob(kb::plan_full_range(range), RangeLabel(mRange), false);
 }
 
-bool SA3Keybed::StartJob(std::vector<kb::Chunk> chunks, std::string rangeLabel, bool preview)
+bool FoundationKeys::StartJob(std::vector<kb::Chunk> chunks, std::string rangeLabel, bool preview)
 {
   std::string missing;
   if (!ModelsReady(&missing))
@@ -517,12 +517,12 @@ bool SA3Keybed::StartJob(std::vector<kb::Chunk> chunks, std::string rangeLabel, 
   return true;
 }
 
-double SA3Keybed::EstimatedSeconds(int chunks) const
+double FoundationKeys::EstimatedSeconds(int chunks) const
 {
   return std::max(0, chunks) * mChunkSecondsAt80 * (double)mSteps / 80.0;
 }
 
-std::string SA3Keybed::StatusText() const
+std::string FoundationKeys::StatusText() const
 {
   if (mRender.Busy())
     return mRender.Status();
@@ -530,14 +530,14 @@ std::string SA3Keybed::StatusText() const
   return mStatus;
 }
 
-void SA3Keybed::SetStatus(std::string text, bool error)
+void FoundationKeys::SetStatus(std::string text, bool error)
 {
   std::lock_guard<std::mutex> lock(mStatusMutex);
   mStatus = std::move(text);
   mStatusIsError = error;
 }
 
-keybed::NoteSamplePtr SA3Keybed::SampleForKey(int key) const
+keybed::NoteSamplePtr FoundationKeys::SampleForKey(int key) const
 {
   const keybed::BankSnapshot* bank = mBank.Latest();
   if (!bank || key < 0 || key > 127)
@@ -545,14 +545,14 @@ keybed::NoteSamplePtr SA3Keybed::SampleForKey(int key) const
   return bank->exact[(size_t)key];
 }
 
-std::string SA3Keybed::KitLabel() const
+std::string FoundationKeys::KitLabel() const
 {
   if (mKitDir.empty())
     return "no kit yet";
   return keybed::FolderName(mKitDir);
 }
 
-void SA3Keybed::ReleaseModels()
+void FoundationKeys::ReleaseModels()
 {
   if (mRender.Busy())
     return;
@@ -560,7 +560,7 @@ void SA3Keybed::ReleaseModels()
   SetStatus("models released");
 }
 
-void SA3Keybed::LoadKitFromFolder(const std::string& dir, bool adoptSettings)
+void FoundationKeys::LoadKitFromFolder(const std::string& dir, bool adoptSettings)
 {
   if (mKitLoader.joinable())
     mKitLoader.join();
@@ -590,7 +590,7 @@ void SA3Keybed::LoadKitFromFolder(const std::string& dir, bool adoptSettings)
   });
 }
 
-void SA3Keybed::InstallLoadedKit()
+void FoundationKeys::InstallLoadedKit()
 {
   LoadedKit kit;
   {
@@ -634,7 +634,7 @@ void SA3Keybed::InstallLoadedKit()
             !kit.error.empty());
 }
 
-std::string SA3Keybed::NoteFilePath(int key) const
+std::string FoundationKeys::NoteFilePath(int key) const
 {
   const keybed::NoteSamplePtr note = key >= 0 && key <= 127 ? SampleForKey(key) : nullptr;
   if (mKitDir.empty() || !note)
@@ -649,7 +649,7 @@ std::string SA3Keybed::NoteFilePath(int key) const
   return std::filesystem::is_regular_file(path, ec) ? path.u8string() : std::string();
 }
 
-void SA3Keybed::AuditionKey(int key, bool on)
+void FoundationKeys::AuditionKey(int key, bool on)
 {
   if (key < 0 || key > 127)
     return;
@@ -661,7 +661,7 @@ void SA3Keybed::AuditionKey(int key, bool on)
   SendMidiMsgFromUI(msg);
 }
 
-bool SA3Keybed::SerializeState(IByteChunk& chunk) const
+bool FoundationKeys::SerializeState(IByteChunk& chunk) const
 {
   chunk.Put(&kStateMagic);
   chunk.Put(&kStateVersion);
@@ -710,7 +710,7 @@ bool SA3Keybed::SerializeState(IByteChunk& chunk) const
   return SerializeParams(chunk);
 }
 
-int SA3Keybed::UnserializeState(const IByteChunk& chunk, int startPos)
+int FoundationKeys::UnserializeState(const IByteChunk& chunk, int startPos)
 {
   uint32_t magic = 0, version = 0;
   int pos = chunk.Get(&magic, startPos);
@@ -801,7 +801,7 @@ int SA3Keybed::UnserializeState(const IByteChunk& chunk, int startPos)
   pos = chunk.Get(&root, pos);
   pos = chunk.Get(&range, pos);
   pos = chunk.GetStr(text, pos);
-  const std::string kitDir = text.Get();
+  const std::string kitDir = keybed::MigratedPath(text.Get());
   int32_t paramCount = version >= 4u ? kParamsInV4 : kParamsInV3;
   if (version >= 5u)
     pos = chunk.Get(&paramCount, pos);

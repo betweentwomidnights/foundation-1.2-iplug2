@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-class SA3Keybed;
+class FoundationKeys;
 
 constexpr int kKeybedControlTag = 1000;
 
@@ -21,7 +21,7 @@ using namespace igraphics;
 class KeybedControl final : public IControl
 {
 public:
-  KeybedControl(const IRECT& bounds, SA3Keybed& plugin);
+  KeybedControl(const IRECT& bounds, FoundationKeys& plugin);
 
   void Draw(IGraphics& g) override;
   void OnMouseDown(float x, float y, const IMouseMod& mod) override;
@@ -107,7 +107,7 @@ private:
   // Opens at `start` (or its nearest existing parent); empty when cancelled.
   std::string PickDirectory(const std::string& start, const char* title);
 
-  SA3Keybed& mPlugin;
+  FoundationKeys& mPlugin;
   bool mSettingsOpen = false;
   bool mSoundOpen = false;
   std::vector<KnobHit> mKnobs;
@@ -143,6 +143,7 @@ private:
   IRECT mRevealKitRect, mLoadKitRect, mKitLabelRect, mWaveformRect;
   IRECT mModelsFolderRect, mResidentRect, mReleaseRect, mCloseRect;
   std::array<IRECT, 4> mEncodingRects{};
+  std::vector<std::pair<IRECT, std::string>> mLinks;   // credits: clickable text -> URL
   IRECT mDownloadRect;
 
   // cached peaks for the last-played sample

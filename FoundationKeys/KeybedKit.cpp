@@ -189,15 +189,53 @@ void PutU32(std::ofstream& out, uint32_t v) { out.write(reinterpret_cast<const c
 
 } // namespace
 
+namespace
+{
+constexpr const char* kOldAppFolderName = "sa3-keybed";   // before the plugin was named Foundation Keys
+
+// parent/kAppFolderName, created on demand. A pre-rename parent/sa3-keybed is moved across the first
+// time; if that move fails (say a file in it is open), the old folder keeps serving so nothing is lost.
+fs::path AppFolderIn(const fs::path& parent)
+{
+  std::error_code ec;
+  const fs::path dir = parent / kAppFolderName;
+  const fs::path old = parent / kOldAppFolderName;
+  if (!fs::exists(dir, ec) && fs::is_directory(old, ec))
+  {
+    fs::rename(old, dir, ec);
+    if (ec)
+      return old;
+  }
+  fs::create_directories(dir, ec);
+  return ec ? fs::path() : dir;
+}
+} // namespace
+
 std::string AppDirectory()
 {
   const std::string docs = DocumentsDirectory();
   if (docs.empty())
     return {};
-  const fs::path dir = PathFromUtf8(docs) / "sa3-keybed";
+  const fs::path dir = AppFolderIn(PathFromUtf8(docs));
+  return dir.empty() ? std::string() : Utf8FromPath(dir);
+}
+
+std::string MigratedPath(const std::string& path)
+{
   std::error_code ec;
-  fs::create_directories(dir, ec);
-  return ec ? std::string() : Utf8FromPath(dir);
+  if (path.empty() || fs::exists(PathFromUtf8(path), ec))
+    return path;
+  for (const char* sep : {"/", "\\"})
+  {
+    const std::string from = std::string(sep) + kOldAppFolderName;
+    const size_t at = path.find(from);
+    if (at == std::string::npos)
+      continue;
+    const std::string moved = path.substr(0, at) + sep + kAppFolderName + path.substr(at + from.size());
+    if (fs::exists(PathFromUtf8(moved), ec))
+      return moved;
+  }
+  return path;
 }
 
 std::string KitsDirectory()
@@ -229,7 +267,10 @@ std::string DefaultModelsDirectory()
 #endif
   if (root.empty())
     return {};
-  const fs::path dir = root / "sa3-keybed" / "models";
+  const fs::path app = AppFolderIn(root);
+  if (app.empty())
+    return {};
+  const fs::path dir = app / "models";
   std::error_code ec;
   fs::create_directories(dir, ec);
   return ec ? std::string() : Utf8FromPath(dir);
@@ -458,7 +499,7 @@ bool WriteKitManifest(const std::string& kitDir, const KitManifest& m, std::stri
                 "  \"seed\": %llu,\n  \"steps\": %d,\n  \"cfg_scale\": %.4g,\n  \"sigma_min\": %.4g,\n  \"sigma_max\": %.4g,\n",
                 (unsigned long long)m.seed, m.steps, m.cfgScale, m.sigmaMin, m.sigmaMax);
   out << "{\n"
-      << "  \"format\": \"sa3-keybed-kit-1\",\n"
+      << "  \"format\": \"foundation-keys-kit-1\",\n"
       << "  \"descriptor\": \"" << JsonEscape(m.descriptor) << "\",\n"
       << "  \"wet\": " << (m.wet ? "true" : "false") << ",\n"
       << "  \"fx\": " << fx << ",\n"

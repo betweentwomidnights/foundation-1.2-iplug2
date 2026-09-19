@@ -47,12 +47,16 @@ struct KitManifest
   std::vector<uint64_t> layerSeeds;
 };
 
-// Documents/sa3-keybed (created on demand); empty on failure.
+// Documents/Foundation Keys (created on demand); empty on failure. Data from before the rename
+// (a "sa3-keybed" folder) is moved across the first time.
+constexpr const char* kAppFolderName = "Foundation Keys";
 std::string AppDirectory();
 std::string KitsDirectory();
 // Where downloads land by default: per-user app data, not Documents (often cloud-synced), since a tier
-// is 0.9-2.5 GB. %LOCALAPPDATA%/sa3-keybed/models; ~/Library/Application Support/sa3-keybed/models.
+// is 0.9-2.5 GB. %LOCALAPPDATA%/Foundation Keys/models; ~/Library/Application Support/Foundation Keys/models.
 std::string DefaultModelsDirectory();
+// A saved path into a pre-rename "sa3-keybed" folder, pointed at its new home once that exists.
+std::string MigratedPath(const std::string& path);
 std::string CreateKitDirectory(const std::string& descriptor, uint64_t seed);
 
 // Small persisted preferences in AppDirectory()/settings.txt ("key=value" lines).

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(SA3KeybedRepo VERSION 0.1.0 LANGUAGES C CXX)
+project(FoundationKeysRepo VERSION 0.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -55,4 +55,4 @@ endif()
 set(SA3_RUNTIME_LIBS ${SA3_RUNTIME_DLLS} ${SA3_RUNTIME_DYLIBS})
 list(REMOVE_DUPLICATES SA3_RUNTIME_LIBS)
 
-add_subdirectory(SA3Keybed)
+add_subdirectory(FoundationKeys)

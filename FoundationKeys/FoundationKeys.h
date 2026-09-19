@@ -38,13 +38,13 @@ enum EParams
 
 using namespace iplug;
 
-class SA3Keybed final : public iplug::Plugin
+class FoundationKeys final : public iplug::Plugin
 {
 public:
   enum class RangeChoice { C2ToB5 = 0, C2ToF6, C2ToB6 };
 
-  SA3Keybed(const InstanceInfo& info);
-  ~SA3Keybed() override;
+  FoundationKeys(const InstanceInfo& info);
+  ~FoundationKeys() override;
 
 #if IPLUG_DSP
   void ProcessBlock(sample** inputs, sample** outputs, int nFrames) override;

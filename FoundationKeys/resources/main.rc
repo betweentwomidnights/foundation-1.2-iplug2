@@ -65,7 +65,7 @@ END
 
 IDD_DIALOG_MAIN DIALOG 0, 0, 300, 300
 STYLE DS_SETFONT | DS_MODALFRAME | DS_CENTER | WS_MINIMIZEBOX | WS_POPUP | WS_CAPTION | WS_SYSMENU
-CAPTION "SA3Keybed"
+CAPTION "Foundation Keys"
 MENU IDR_MENU1
 FONT 8, "MS Sans Serif"
 BEGIN
@@ -164,7 +164,7 @@ END
 
 // Icon with lowest ID value placed first to ensure application icon
 // remains consistent on all systems.
-IDI_ICON1               ICON                    "SA3Keybed.ico"
+IDI_ICON1               ICON                    "FoundationKeys.ico"
 
 /////////////////////////////////////////////////////////////////////////////
 //
@@ -189,8 +189,8 @@ END
 //
 
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION 0,0,1,0
-PRODUCTVERSION 0,0,1,0
+FILEVERSION 0,1,0,0
+PRODUCTVERSION 0,1,0,0
  FILEFLAGSMASK 0x3fL
 #ifdef _DEBUG
  FILEFLAGS 0x1L
@@ -205,13 +205,13 @@ BEGIN
     BEGIN
         BLOCK "040004e4"
         BEGIN
-            VALUE "FileVersion", "0.0.1"
-            VALUE "ProductVersion", "0.0.1"
-            VALUE "FileDescription", "SA3Keybed"
-            VALUE "InternalName", "SA3Keybed"
-            VALUE "ProductName", "SA3Keybed"
-            VALUE "CompanyName", "AcmeInc"
-            VALUE "LegalCopyright", "Copyright 2020 Acme Inc"
+            VALUE "FileVersion", "0.1.0"
+            VALUE "ProductVersion", "0.1.0"
+            VALUE "FileDescription", "Foundation Keys"
+            VALUE "InternalName", "FoundationKeys"
+            VALUE "ProductName", "Foundation Keys"
+            VALUE "CompanyName", "the collabage patch"
+            VALUE "LegalCopyright", "Copyright 2026 the collabage patch"
             VALUE "LegalTrademarks", "VST is a trademark of Steinberg Media Technologies GmbH, Audio Unit is a trademark of Apple, Inc."
         END
     END

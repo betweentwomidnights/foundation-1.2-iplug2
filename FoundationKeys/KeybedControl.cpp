@@ -1,6 +1,6 @@
 #include "KeybedControl.h"
 
-#include "SA3Keybed.h"
+#include "FoundationKeys.h"
 #include "SA3UIPrimitives.h"
 #include "SA3UITheme.h"
 
@@ -96,7 +96,7 @@ std::string ShortDuration(double seconds)
 }
 } // namespace
 
-KeybedControl::KeybedControl(const IRECT& bounds, SA3Keybed& plugin)
+KeybedControl::KeybedControl(const IRECT& bounds, FoundationKeys& plugin)
 : IControl(bounds)
 , mPlugin(plugin)
 {
@@ -116,6 +116,7 @@ void KeybedControl::Draw(IGraphics& g)
   mParamSliders.clear();
   mKnobs.clear();
   mSheetHits.clear();
+  mLinks.clear();
   if (mSettingsOpen)
     DrawSettings(g, shell);
   else if (mSoundOpen)
@@ -142,19 +143,18 @@ void KeybedControl::DrawMain(IGraphics& g, const IRECT& shell)
 
 float KeybedControl::DrawHeader(IGraphics& g, float left, float right, float y)
 {
-  g.DrawText(Label(TitleTextSize, COLOR_WHITE), "keybed", IRECT(left, y, left + 90.f, y + 26.f));
-  g.DrawText(Label(11.f, TextFaint()), "foundation-1.2", IRECT(left + 72.f, y + 4.f, left + 170.f, y + 26.f));
+  g.DrawText(Label(TitleTextSize, COLOR_WHITE), "foundation keys", IRECT(left, y, left + 160.f, y + 26.f));
+  g.DrawText(Label(11.f, TextFaint()), "by RoyalCities", IRECT(left + 150.f, y + 4.f, left + 240.f, y + 26.f));
   mSettingsRect = IRECT(right - 70.f, y + 2.f, right, y + 24.f);
   DrawButton(g, mSettingsRect, "settings", kFont);
   const bool ready = mPlugin.ModelsReady();
   char label[64];
   if (mPlugin.Downloading())
-    std::snprintf(label, sizeof label, "downloading %s %.0f%%", mPlugin.DownloadingTier().c_str(),
-                  mPlugin.DownloadProgress() * 100.f);
+    std::snprintf(label, sizeof label, "%s %.0f%%", mPlugin.DownloadingTier().c_str(), mPlugin.DownloadProgress() * 100.f);
   else
-    std::snprintf(label, sizeof label, "%s", ready ? (mPlugin.Encoding() + " ready").c_str() : "no models - open settings");
+    std::snprintf(label, sizeof label, "%s", ready ? (mPlugin.Encoding() + " ready").c_str() : "no models");
   g.DrawText(Label(12.f, mPlugin.Downloading() ? TextDim() : ready ? Green() : Red(), EAlign::Far), label,
-             IRECT(left + 170.f, y, mSettingsRect.L - 8.f, y + 26.f));
+             IRECT(left + 240.f, y, mSettingsRect.L - 8.f, y + 26.f));
   return y + 30.f;
 }
 
@@ -563,8 +563,37 @@ void KeybedControl::DrawSettings(IGraphics& g, const IRECT& shell)
                       "each chunk renders six chromatic notes in one 20 s pass with one shared seed, then "
                       "slices them into 3 s samples (RoyalCities' keybed recipe). the model renders one "
                       "octave below its prompt labels, so samples are keyed by their real pitch: key 60 "
-                      "plays middle C. kits are saved with an .sfz under Documents/sa3-keybed/kits.",
+                      "plays middle C. kits are saved with an .sfz under Documents/Foundation Keys/kits.",
                       IRECT(card.L + 12.f, card.T + 34.f, card.R - 12.f, card.B - 6.f));
+  y = card.B + 12.f;
+
+  // credits: the model and the code this instrument stands on
+  card = IRECT(left, y, right, y + 142.f);
+  g.FillRoundRect(PanelDark(), card, 5.f);
+  g.DrawRoundRect(FrameSoft(), card, 5.f);
+  g.DrawText(Label(14.f, COLOR_WHITE), "credits", IRECT(card.L + 12.f, card.T + 8.f, card.R - 12.f, card.T + 30.f));
+  struct Credit
+  {
+    const char* what;
+    const char* link;
+    const char* url;
+  };
+  static const Credit credits[] = {
+    {"model", "Foundation-1.2 by RoyalCities", "https://huggingface.co/RoyalCities/Foundation-1"},
+    {"upstream", "RC-stable-audio-tools", "https://github.com/RoyalCities/RC-stable-audio-tools"},
+    {"inference", "sa3.cpp", "https://github.com/betweentwomidnights/sa3.cpp"},
+    {"framework", "iPlug2 (fork)", "https://github.com/betweentwomidnights/iPlug2"},
+    {"source", "foundation-1.2-iplug2", "https://github.com/betweentwomidnights/foundation-1.2-iplug2"},
+  };
+  float row = card.T + 34.f;
+  for (const Credit& credit : credits)
+  {
+    g.DrawText(Label(10.f, TextDim()), credit.what, IRECT(card.L + 12.f, row, card.L + 80.f, row + 18.f));
+    const IRECT link(card.L + 80.f, row, card.R - 12.f, row + 18.f);
+    g.DrawText(Label(11.f, Red()), credit.link, link);
+    mLinks.emplace_back(link, credit.url);
+    row += 20.f;
+  }
 }
 
 void KeybedControl::DrawSlider(IGraphics& g, const IRECT& bounds, const char* label, const char* valueText,
@@ -622,6 +651,12 @@ void KeybedControl::OnMouseDown(float x, float y, const IMouseMod& mod)
   mDrag = Drag::None;
   if (mSettingsOpen)
   {
+    for (const auto& [rect, url] : mLinks)
+      if (rect.Contains(x, y) && GetUI())
+      {
+        GetUI()->OpenURL(url.c_str());
+        return;
+      }
     if (mCloseRect.Contains(x, y)) mSettingsOpen = false;
     else if (mModelsFolderRect.Contains(x, y))
     {
@@ -692,7 +727,7 @@ void KeybedControl::OnMouseDown(float x, float y, const IMouseMod& mod)
     }
   if (mPreviewRootRect.Contains(x, y)) { OpenPreviewRootMenu(); return; }
   for (int i = 0; i < 3; ++i)
-    if (mRangeRects[(size_t)i].Contains(x, y)) { mPlugin.SetRange((SA3Keybed::RangeChoice)i); SetDirty(false); return; }
+    if (mRangeRects[(size_t)i].Contains(x, y)) { mPlugin.SetRange((FoundationKeys::RangeChoice)i); SetDirty(false); return; }
   if (mPreviewRect.Contains(x, y) || mBuildRect.Contains(x, y))
   {
     if (mPlugin.Busy()) mPlugin.CancelRender();
@@ -1283,7 +1318,7 @@ void KeybedControl::DrawSoundSheet(IGraphics& g, const IRECT& shell)
   y = DrawLayerTabs(g, left, right, y);
 
   // instrument: family and type, plus RC's optional second (hybrid) instrument
-  y = DrawSectionLabel(g, left, right, y, "instrument", SA3Keybed::kSectionInstrument,
+  y = DrawSectionLabel(g, left, right, y, "instrument", FoundationKeys::kSectionInstrument,
                        sound.second_instrument.empty() ? "+ second instrument" : nullptr, SheetAction::AddSecond);
   const float half = (right - left - 8.f) * 0.5f;
   const IRECT family(left, y, left + half, y + 24.f);
@@ -1308,7 +1343,7 @@ void KeybedControl::DrawSoundSheet(IGraphics& g, const IRECT& shell)
   y += 4.f;
 
   // character: timbre knobs
-  y = DrawSectionLabel(g, left, right, y, "character", SA3Keybed::kSectionCharacter,
+  y = DrawSectionLabel(g, left, right, y, "character", FoundationKeys::kSectionCharacter,
                        (int)sound.character.size() < kMaxCharacter ? "+ add" : nullptr, SheetAction::AddCharacter);
   std::vector<KnobHit> knobs;
   for (int i = 0; i < (int)sound.character.size(); ++i)
@@ -1322,7 +1357,7 @@ void KeybedControl::DrawSoundSheet(IGraphics& g, const IRECT& shell)
     y = DrawKnobRow(g, left, right, y, knobs, true);
 
   // shape: articulation and oscillator, each a toggle revealing its knob
-  y = DrawSectionLabel(g, left, right, y, "shape", SA3Keybed::kSectionShape, nullptr, SheetAction::Done);
+  y = DrawSectionLabel(g, left, right, y, "shape", FoundationKeys::kSectionShape, nullptr, SheetAction::Done);
   const float mid = (left + right) * 0.5f;
   const IRECT articulation(mid - 116.f, y, mid - 4.f, y + 24.f);
   const IRECT oscillator(mid + 4.f, y, mid + 116.f, y + 24.f);
@@ -1350,7 +1385,7 @@ void KeybedControl::DrawSoundSheet(IGraphics& g, const IRECT& shell)
   }
   else
   {
-  y = DrawSectionLabel(g, left, right, y, "render fx", SA3Keybed::kSectionFx, nullptr, SheetAction::Done);
+  y = DrawSectionLabel(g, left, right, y, "render fx", FoundationKeys::kSectionFx, nullptr, SheetAction::Done);
   const IRECT dry(left, y, left + 54.f, y + 24.f);
   const IRECT wet(dry.R + 6.f, y, dry.R + 60.f, y + 24.f);
   DrawTab(g, dry, "dry", kFont, !sound.wet);

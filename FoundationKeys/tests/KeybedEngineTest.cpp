@@ -1,7 +1,7 @@
 // Headless end-to-end check of the instrument path the plugin uses:
 //   libsa3 (runtime-loaded) -> KeybedRenderService -> kit on disk -> KeybedBank -> MIDI -> voices.
 //
-// Usage: SA3KeybedEngineTest MODELS_DIR [STEPS] [ENCODING]
+// Usage: FoundationKeysEngineTest MODELS_DIR [STEPS] [ENCODING]
 // Renders a six-note sine preview, plays every key through the sampler at a 48 kHz host rate, and
 // checks each output's pitch against its MIDI key (Goertzel energy at f vs f/2, 2f, and +-1 semitone).
 // Then checks gap filling, the octave parameter, mono/poly, kit reload from disk, a three-layer keybed,
@@ -390,6 +390,6 @@ int main(int argc, char** argv)
     service.Collect(false);
   }
 
-  std::printf(gFailures ? "SA3KeybedEngineTest: %d failure(s)\n" : "SA3KeybedEngineTest: ok\n", gFailures);
+  std::printf(gFailures ? "FoundationKeysEngineTest: %d failure(s)\n" : "FoundationKeysEngineTest: ok\n", gFailures);
   return gFailures ? 1 : 0;
 }

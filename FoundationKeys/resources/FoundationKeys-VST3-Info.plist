@@ -5,23 +5,23 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>English</string>
 	<key>CFBundleExecutable</key>
-	<string>SA3Keybed</string>
+	<string>FoundationKeys</string>
 	<key>CFBundleGetInfoString</key>
-	<string>SA3Keybed v1.0.0 Copyright 2025 Acme Inc</string>
+	<string>Foundation Keys v0.1.0 Copyright 2026 the collabage patch</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.AcmeInc.vst3.SA3Keybed</string>
+	<string>com.thecollabagepatch.vst3.FoundationKeys</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>SA3Keybed</string>
+	<string>Foundation Keys</string>
 	<key>CFBundlePackageType</key>
 	<string>BNDL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0.0</string>
+	<string>0.1.0</string>
 	<key>CFBundleSignature</key>
 	<string>PmBl</string>
 	<key>CFBundleVersion</key>
-	<string>1.0.0</string>
+	<string>0.1.0</string>
 	<key>CSResourcesFileMapped</key>
 	<true/>
 	<key>LSMinimumSystemVersion</key>
