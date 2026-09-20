@@ -79,6 +79,18 @@ build/out-test/Release/FoundationKeysEngineTest.exe <models dir>   # Windows
 build/out-test/FoundationKeysEngineTest <models dir>               # macOS / Linux
 ```
 
+## Releases
+
+macOS ships as a signed, notarized zip rather than an installer, and it's Apple Silicon only. Drag
+`FoundationKeys.vst3` into `/Library/Audio/Plug-Ins/VST3` and `FoundationKeys.clap` into
+`/Library/Audio/Plug-Ins/CLAP` — make that second folder if it isn't there, macOS doesn't create it
+until something installs a CLAP. The app goes wherever you like.
+
+That's a gap, not a preference: if you'd like a proper DMG like
+[gary4juce](https://github.com/betweentwomidnights/gary4juce) gets, ask nicely in an issue and it'll
+happen in the next tagged release. The zip is codesigned and notarized at least, so Gatekeeper won't
+fight you about it.
+
 ## License
 
 Foundation-1.2 weights: Stability AI Community License (see the model card). The T5 encoder is Apache-2.0.
