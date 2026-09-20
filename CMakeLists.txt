@@ -42,6 +42,10 @@ if(APPLE)
     "${SA3_BUILD_DIR}/ggml/src/libggml*.dylib"
     "${SA3_BUILD_DIR}/ggml/src/ggml-*/*.dylib"
   )
+  # ggml lays each library down under three names (libggml.dylib, libggml.0.dylib,
+  # libggml.0.17.0.dylib) that all carry the same @rpath install name, so copying every one triples
+  # the payload and the notarization signing work. Keep only the soname the binaries actually load.
+  list(FILTER SA3_RUNTIME_DYLIBS INCLUDE REGEX "/(libsa3\\.dylib|libggml[a-z-]*\\.[0-9]+\\.dylib)$")
 endif()
 # Only bundle the CUDA runtime when the selected sa3 build actually uses the CUDA backend.
 if(EXISTS "${SA3_BUILD_DIR}/bin/Release/ggml-cuda.dll")

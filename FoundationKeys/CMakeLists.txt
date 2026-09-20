@@ -50,6 +50,13 @@ function(foundation_keys_copy_runtime target_name)
       COMMAND ${CMAKE_COMMAND} -E copy_if_different ${SA3_RUNTIME_LIBS} "$<TARGET_FILE_DIR:${target_name}>"
       COMMENT "Copying sa3/ggml runtime libraries for ${target_name}"
     )
+    if(APPLE)
+      add_custom_command(TARGET ${target_name} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -DBUNDLE_DIR=$<TARGET_FILE_DIR:${target_name}>
+                -P "${CMAKE_SOURCE_DIR}/cmake/FixMacRpath.cmake"
+        COMMENT "Pointing sa3/ggml runtime libraries at @loader_path for ${target_name}"
+      )
+    endif()
   endif()
 endfunction()
 

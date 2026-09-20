@@ -32,6 +32,9 @@ F16 2.5 GB, Q8_0 1.4 GB, Q5_K_M 1.0 GB, Q4_K_M 0.9 GB.
 
 ## Build
 
+You need CMake 3.20+, git, and a C++17 toolchain: Visual Studio 2022 on Windows, Xcode with its command
+line tools on macOS (`brew install cmake` if `cmake` isn't on your PATH).
+
 Clone this repo and sa3.cpp side by side, then build libsa3 with SAT (Foundation) support:
 
 ```
@@ -40,21 +43,41 @@ git clone https://github.com/betweentwomidnights/sa3.cpp.git
 cd sa3.cpp && build.cmd cuda          # or: build.cmd vulkan / ./build.sh metal
 ```
 
+If you already cloned without `--recurse-submodules`, run `git submodule update --init --recursive` in
+this repo before configuring — `vendor/iPlug2` is empty otherwise and `find_package(iPlug2)` fails.
+
 Fetch the iPlug2 SDKs (git-bash on Windows), then build the plugin:
 
 ```
-cd foundation-1.2-iplug2/vendor/iPlug2/Dependencies/IPlug && ./download-iplug-sdks.sh && ./download-clap-sdks.sh
+cd foundation-1.2-iplug2/vendor/iPlug2/Dependencies/IPlug && ./download-iplug-sdks.sh
 cd ../../../..
-cmake -S . -B build -DSA3_BUILD_DIR=../sa3.cpp/build-cuda      # or build-vulkan / build-metal
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DSA3_BUILD_DIR=../sa3.cpp/build-cuda   # or build-vulkan / build-metal
 cmake --build build --config Release --target FoundationKeys-vst3 FoundationKeys-clap FoundationKeys-app
 ```
 
-The backend's runtime libraries are copied beside the plugin; libsa3 loads on first render, never at plugin
-scan. For release builds, build sa3.cpp with `-DGGML_NATIVE=OFF` (portable CPU code and CUDA architectures)
-and configure this repo with `-DFOUNDATION_KEYS_DEV_MODELS=OFF`.
+`download-iplug-sdks.sh` already calls the CLAP and WAM scripts; the WAM one runs `sudo rm` and will ask
+for a password, which you can skip — only VST3 and CLAP matter here. Pass `-DCMAKE_BUILD_TYPE=Release`:
+the macOS and Linux generators are single-config, so `--config Release` alone leaves you with an
+unoptimized build.
 
-`build/out-test/Release/FoundationKeysEngineTest.exe <models dir>` renders through libsa3 and checks pitch,
-layers, mono/poly, headroom, kit reload, and cancel.
+The backend's runtime libraries are copied beside the plugin and re-pointed at `@loader_path` on macOS, so
+the bundles run off the build machine; libsa3 loads on first render, never at plugin scan. For release
+builds, configure this repo with `-DFOUNDATION_KEYS_DEV_MODELS=OFF` and build sa3.cpp with
+`-DGGML_NATIVE=OFF` (portable CPU code and CUDA architectures). `build.sh`/`build.cmd` take only a backend
+name, so configure that one by hand:
+
+```
+cd sa3.cpp && cmake -S . -B build-metal -DCMAKE_BUILD_TYPE=Release -DSA3_BUILD_SAT=ON -DSA3_METAL=ON -DGGML_NATIVE=OFF
+cmake --build build-metal --config Release -j
+```
+
+The headless engine test renders through libsa3 and checks pitch, layers, mono/poly, headroom, kit reload,
+and cancel. It takes a models directory:
+
+```
+build/out-test/Release/FoundationKeysEngineTest.exe <models dir>   # Windows
+build/out-test/FoundationKeysEngineTest <models dir>               # macOS / Linux
+```
 
 ## License
 
