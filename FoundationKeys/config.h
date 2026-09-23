@@ -1,7 +1,7 @@
 #define PLUG_NAME "Foundation Keys"
 #define PLUG_MFR "the collabage patch"
-#define PLUG_VERSION_HEX 0x00000100
-#define PLUG_VERSION_STR "0.1.0"
+#define PLUG_VERSION_HEX 0x00000101
+#define PLUG_VERSION_STR "0.1.1"
 #define PLUG_UNIQUE_ID 'FnKy'
 #define PLUG_MFR_ID 'Tcpa'
 #define PLUG_URL_STR "https://github.com/betweentwomidnights/foundation-1.2-iplug2"
@@ -25,9 +25,15 @@
 #define PLUG_HAS_UI 1
 #define PLUG_WIDTH 460
 #define PLUG_HEIGHT 840
+#define PLUG_WIDE_WIDTH 1040
+#define PLUG_WIDE_HEIGHT 840
 #define PLUG_FPS 30
 #define PLUG_SHARED_RESOURCES 0
-#define PLUG_HOST_RESIZE 0
+#define PLUG_HOST_RESIZE 1
+#define PLUG_MIN_WIDTH PLUG_WIDTH
+#define PLUG_MAX_WIDTH PLUG_WIDE_WIDTH
+#define PLUG_MIN_HEIGHT PLUG_HEIGHT
+#define PLUG_MAX_HEIGHT PLUG_WIDE_HEIGHT
 
 #define AUV2_ENTRY FoundationKeys_Entry
 #define AUV2_ENTRY_STR "FoundationKeys_Entry"

@@ -36,19 +36,20 @@ inline IColor ButtonBackground(bool hovered, bool enabled = true)
 }
 
 inline void DrawButton(IGraphics& g, const IRECT& bounds, const char* label, const char* fontName,
-                       bool hovered = false, bool enabled = true)
+                       bool hovered = false, bool enabled = true, float textSize = BodyTextSize)
 {
   g.FillRoundRect(ButtonBackground(hovered, enabled), bounds, CornerRadius);
   g.DrawRoundRect(ButtonBorder(enabled), bounds, CornerRadius);
-  g.DrawText(IText(BodyTextSize, ButtonText(hovered), fontName, EAlign::Center, EVAlign::Middle),
+  g.DrawText(IText(textSize, ButtonText(hovered), fontName, EAlign::Center, EVAlign::Middle),
              label, bounds.GetPadded(-4.f));
 }
 
-inline void DrawTab(IGraphics& g, const IRECT& bounds, const char* label, const char* fontName, bool active)
+inline void DrawTab(IGraphics& g, const IRECT& bounds, const char* label, const char* fontName, bool active,
+                    float textSize = TabTextSize)
 {
   g.FillRoundRect(active ? Red() : ButtonFill(), bounds, CornerRadius);
   g.DrawRoundRect(active ? Red() : Frame(), bounds, CornerRadius);
-  g.DrawText(IText(TabTextSize, active ? COLOR_BLACK : COLOR_WHITE, fontName, EAlign::Center, EVAlign::Middle),
+  g.DrawText(IText(textSize, active ? COLOR_BLACK : COLOR_WHITE, fontName, EAlign::Center, EVAlign::Middle),
              label, bounds.GetPadded(-4.f));
 }
 

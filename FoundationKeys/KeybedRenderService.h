@@ -27,6 +27,8 @@ struct KeybedJob
   std::vector<std::string> fx;
   std::vector<sa3::sat::keybed::Chunk> chunks;
   std::string rangeLabel;
+  std::string kitsDirectory;
+  AudioFormat audioFormat = AudioFormat::Flac;
   int64_t seed = -1;   // base seed; -1 picks one. Layered jobs derive one seed per layer from it.
   int steps = 80;
   float cfgScale = 6.f;

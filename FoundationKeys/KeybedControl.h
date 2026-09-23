@@ -85,7 +85,7 @@ private:
   float DrawDescriptor(IGraphics& g, float left, float right, float y);
   float DrawGeneration(IGraphics& g, float left, float right, float y);
   float DrawActions(IGraphics& g, float left, float right, float y);
-  float DrawKeyboard(IGraphics& g, float left, float right, float y);
+  float DrawKeyboard(IGraphics& g, float left, float right, float y, float keyHeight = 96.f);
   float DrawNoteWaveform(IGraphics& g, float left, float right, float y);
   float DrawSound(IGraphics& g, float left, float right, float y);
   float DrawLayerMix(IGraphics& g, float left, float right, float y);
@@ -141,7 +141,8 @@ private:
   IRECT mOctaveDownRect, mOctaveUpRect, mFillGapsRect;
   std::array<IRECT, 2> mVoiceModeRects{};
   IRECT mRevealKitRect, mLoadKitRect, mKitLabelRect, mWaveformRect;
-  IRECT mModelsFolderRect, mResidentRect, mReleaseRect, mCloseRect;
+  IRECT mModelsFolderRect, mKitsFolderRect, mResidentRect, mReleaseRect, mCloseRect;
+  IRECT mCompactLayoutRect, mWideLayoutRect, mFlacFormatRect, mWavFormatRect;
   std::array<IRECT, 4> mEncodingRects{};
   std::vector<std::pair<IRECT, std::string>> mLinks;   // credits: clickable text -> URL
   IRECT mDownloadRect;

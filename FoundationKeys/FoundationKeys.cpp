@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
+#include <exception>
 #include <filesystem>
 #include <random>
 
@@ -62,10 +63,19 @@ FoundationKeys::FoundationKeys(const InstanceInfo& info)
 
 #if IPLUG_EDITOR
   mMakeGraphicsFunc = [&]() {
-    return MakeGraphics(*this, PLUG_WIDTH, PLUG_HEIGHT, PLUG_FPS, GetScaleForScreen(PLUG_WIDTH, PLUG_HEIGHT));
+    const int width = mWideMode ? PLUG_WIDE_WIDTH : PLUG_WIDTH;
+    const int height = mWideMode ? PLUG_WIDE_HEIGHT : PLUG_HEIGHT;
+    return MakeGraphics(*this, width, height, PLUG_FPS, GetScaleForScreen(width, height));
   };
 
   mLayoutFunc = [&](IGraphics* pGraphics) {
+    pGraphics->SetLayoutOnResize(true);
+    if (auto* existing = pGraphics->GetControlWithTag(kKeybedControlTag))
+    {
+      existing->SetTargetAndDrawRECTs(pGraphics->GetBounds());
+      pGraphics->SetQwertyMidiKeyHandlerFunc([this](const IMidiMsg& msg) { SendMidiMsgFromUI(msg); });
+      return;
+    }
     pGraphics->AttachPanelBackground(COLOR_BLACK);
     pGraphics->EnableMouseOver(true);
     pGraphics->AttachTextEntryControl();
@@ -84,6 +94,7 @@ FoundationKeys::~FoundationKeys()
   mRender.Cancel();
   if (mKitLoader.joinable())
     mKitLoader.join();
+  FinishKitStorageMove(true);
 }
 
 #if IPLUG_DSP
@@ -188,6 +199,7 @@ void FoundationKeys::OnIdle()
   }
   InstallLoadedKit();
   mBank.CollectGarbage();
+  FinishKitStorageMove();
   {
     bool ok = false;
     std::string dir, encoding, message;
@@ -208,6 +220,21 @@ void FoundationKeys::OnIdle()
       control->SetDirty(false);
 #endif
 }
+
+#if IPLUG_EDITOR
+bool FoundationKeys::OnHostRequestingSupportedViewConfiguration(int width, int height)
+{
+  return ConstrainEditorResize(width, height);
+}
+
+void FoundationKeys::OnHostSelectedViewConfiguration(int width, int height)
+{
+  mWideMode = width >= (PLUG_WIDTH + PLUG_WIDE_WIDTH) / 2;
+  keybed::SaveSetting("wide_mode", mWideMode ? "1" : "0");
+  if (GetUI())
+    GetUI()->Resize(width, height, GetUI()->GetDrawScale(), true);
+}
+#endif
 
 kb::SoundSpec FoundationKeys::Sound() const
 {
@@ -380,6 +407,10 @@ void FoundationKeys::LoadGlobalSettings()
   if (!encoding.empty())
     mEncoding = encoding;
   mModelsDir = keybed::MigratedPath(keybed::LoadSetting("models_dir"));
+  mKitsDir = keybed::KitsDirectory();
+  const std::string audioFormat = keybed::LoadSetting("kit_audio_format");
+  mKitAudioFormat = audioFormat == "wav" ? keybed::AudioFormat::Wav : keybed::AudioFormat::Flac;
+  mWideMode = keybed::LoadSetting("wide_mode") == "1";
   if (mModelsDir.empty())
   {
     // An explicit FOUNDATION_KEYS_MODELS_DIR, then (dev builds) the sa3.cpp checkout's staged models;
@@ -409,6 +440,112 @@ void FoundationKeys::SetModelsDir(const std::string& dir)
   mModelsDir = dir;
   keybed::SaveSetting("models_dir", dir);
   mRender.ReleaseModels();
+}
+
+void FoundationKeys::SetKitsDir(const std::string& dir)
+{
+  if (dir.empty() || KitStorageMoving())
+    return;
+  if (mKitStorageMover.joinable())
+    FinishKitStorageMove();
+  if (dir == mKitsDir)
+    return;
+  if (Busy())
+  {
+    SetStatus("finish the current build before changing kit storage", true);
+    return;
+  }
+  {
+    std::lock_guard<std::mutex> lock(mKitStorageMutex);
+    mKitStorageMoveReady = false;
+    mKitStorageMoveSucceeded = false;
+    mKitStorageMoveDestination = dir;
+    mKitStorageMoveError.clear();
+  }
+  const std::string source = mKitsDir;
+  mKitStorageMoving.store(true, std::memory_order_release);
+  mKitStorageMover = std::thread([this, source, dir]() {
+    bool ok = false;
+    std::string error;
+    try
+    {
+      ok = keybed::CopyKitsDirectory(source, dir, error);
+    }
+    catch (const std::exception& e)
+    {
+      error = e.what();
+    }
+    catch (...)
+    {
+      error = "unexpected error while copying kits";
+    }
+    {
+      std::lock_guard<std::mutex> lock(mKitStorageMutex);
+      mKitStorageMoveSucceeded = ok;
+      mKitStorageMoveError = std::move(error);
+      mKitStorageMoveReady = true;
+    }
+    mKitStorageMoving.store(false, std::memory_order_release);
+  });
+  SetStatus("copying existing kits to the selected folder");
+}
+
+void FoundationKeys::FinishKitStorageMove(bool waitForCompletion)
+{
+  if (!mKitStorageMover.joinable())
+    return;
+  if (waitForCompletion)
+    mKitStorageMover.join();
+  else if (KitStorageMoving())
+    return;
+  else
+    mKitStorageMover.join();
+  bool ready = false;
+  bool succeeded = false;
+  std::string destination, error;
+  {
+    std::lock_guard<std::mutex> lock(mKitStorageMutex);
+    ready = mKitStorageMoveReady;
+    succeeded = mKitStorageMoveSucceeded;
+    destination = mKitStorageMoveDestination;
+    error = mKitStorageMoveError;
+    mKitStorageMoveReady = false;
+  }
+  if (!ready)
+    return;
+  if (succeeded && keybed::SaveSetting("kits_dir", destination))
+  {
+    mKitsDir = destination;
+    SetStatus("kit storage updated; the previous folder was kept as a backup");
+  }
+  else
+  {
+    if (succeeded)
+      error = "kits were copied, but the new location could not be saved";
+    SetStatus(error.empty() ? "could not change kit storage" : error, true);
+  }
+}
+
+void FoundationKeys::SetKitAudioFormat(keybed::AudioFormat format)
+{
+  if (mKitAudioFormat == format)
+    return;
+  mKitAudioFormat = format;
+  keybed::SaveSetting("kit_audio_format", format == keybed::AudioFormat::Flac ? "flac" : "wav");
+}
+
+void FoundationKeys::SetWideMode(bool wide)
+{
+  if (mWideMode == wide)
+    return;
+  mWideMode = wide;
+  keybed::SaveSetting("wide_mode", wide ? "1" : "0");
+#if IPLUG_EDITOR
+  if (GetUI())
+    GetUI()->Resize(wide ? PLUG_WIDE_WIDTH : PLUG_WIDTH,
+                    wide ? PLUG_WIDE_HEIGHT : PLUG_HEIGHT,
+                    GetUI()->GetDrawScale(), true);
+#endif
 }
 
 void FoundationKeys::SetEncoding(const std::string& encoding)
@@ -474,6 +611,11 @@ bool FoundationKeys::StartFullBuild()
 
 bool FoundationKeys::StartJob(std::vector<kb::Chunk> chunks, std::string rangeLabel, bool preview)
 {
+  if (KitStorageMoving())
+  {
+    SetStatus("wait for kit storage copy to finish", true);
+    return false;
+  }
   std::string missing;
   if (!ModelsReady(&missing))
   {
@@ -490,6 +632,8 @@ bool FoundationKeys::StartJob(std::vector<kb::Chunk> chunks, std::string rangeLa
   job.fx = kb::fx_of(mLayers[0]);
   job.chunks = std::move(chunks);
   job.rangeLabel = std::move(rangeLabel);
+  job.kitsDirectory = mKitsDir;
+  job.audioFormat = mKitAudioFormat;
   job.steps = mSteps;
   job.cfgScale = mCfgScale;
   job.keepResident = mKeepResident;
@@ -645,8 +789,13 @@ std::string FoundationKeys::NoteFilePath(int key) const
   const std::filesystem::path layerDir = path / kb::kLayerDirNames[std::clamp(note->layer, 0, kb::kLayerCount - 1)];
   if (std::filesystem::is_directory(layerDir, ec))
     path = layerDir;
-  path /= keybed::NoteFileName(key);
-  return std::filesystem::is_regular_file(path, ec) ? path.u8string() : std::string();
+  for (keybed::AudioFormat format : {keybed::AudioFormat::Flac, keybed::AudioFormat::Wav})
+  {
+    const std::filesystem::path candidate = path / keybed::NoteFileName(key, format);
+    if (std::filesystem::is_regular_file(candidate, ec))
+      return candidate.u8string();
+  }
+  return {};
 }
 
 void FoundationKeys::AuditionKey(int key, bool on)

@@ -7,7 +7,7 @@
 	<key>CFBundleExecutable</key>
 	<string>FoundationKeys</string>
 	<key>CFBundleGetInfoString</key>
-	<string>Foundation Keys v0.1.0 Copyright 2026 the collabage patch</string>
+	<string>Foundation Keys v0.1.1 Copyright 2026 the collabage patch</string>
 	<key>CFBundleIconFile</key>
 	<string>FoundationKeys.icns</string>
 	<key>CFBundleIdentifier</key>
@@ -19,11 +19,11 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.1.0</string>
+	<string>0.1.1</string>
 	<key>CFBundleSignature</key>
 	<string>PmBl</string>
 	<key>CFBundleVersion</key>
-	<string>0.1.0</string>
+	<string>0.1.1</string>
 	<key>CSResourcesFileMapped</key>
 	<true/>
 	<key>LSApplicationCategoryType</key>

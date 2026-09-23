@@ -53,6 +53,10 @@ public:
   void OnParamChange(int paramIdx) override;
 #endif
   void OnIdle() override;
+#if IPLUG_EDITOR
+  bool OnHostRequestingSupportedViewConfiguration(int width, int height) override;
+  void OnHostSelectedViewConfiguration(int width, int height) override;
+#endif
   bool SerializeState(IByteChunk& chunk) const override;
   int UnserializeState(const IByteChunk& chunk, int startPos) override;
 
@@ -107,6 +111,13 @@ public:
 
   std::string ModelsDir() const { return mModelsDir; }
   void SetModelsDir(const std::string& dir);
+  std::string KitsDir() const { return mKitsDir; }
+  void SetKitsDir(const std::string& dir);
+  bool KitStorageMoving() const { return mKitStorageMoving.load(std::memory_order_acquire); }
+  keybed::AudioFormat KitAudioFormat() const { return mKitAudioFormat; }
+  void SetKitAudioFormat(keybed::AudioFormat format);
+  bool WideMode() const { return mWideMode; }
+  void SetWideMode(bool wide);
   std::string Encoding() const { return mEncoding; }
   void SetEncoding(const std::string& encoding);
   bool KeepResident() const { return mKeepResident; }
@@ -140,11 +151,11 @@ public:
   keybed::NoteSamplePtr SampleForKey(int key) const;
   std::string KitDir() const { return mKitDir; }
   std::string KitLabel() const;
-  // Reads the kit's WAVs on a background thread; OnIdle installs them. adoptSettings takes the kit's
+  // Reads the kit's WAVs or FLACs on a background thread; OnIdle installs them. adoptSettings takes the kit's
   // descriptor/seed (a user load); false when restoring saved state.
   void LoadKitFromFolder(const std::string& dir, bool adoptSettings = true);
   bool LoadingKit() const { return mKitLoading.load(std::memory_order_acquire); }
-  // Path of the WAV for `key` in the current kit, or empty when it has not been saved.
+  // Path of the sample for `key` in the current kit, or empty when it has not been saved.
   std::string NoteFilePath(int key) const;
   void AuditionKey(int key, bool on);
 
@@ -153,6 +164,7 @@ private:
   void InstallLoadedKit();
   void SetStatus(std::string text, bool error = false);
   void LoadGlobalSettings();
+  void FinishKitStorageMove(bool waitForCompletion = false);
 
   keybed::KeybedEngine mEngine;
   keybed::KeybedBank mBank;
@@ -180,7 +192,10 @@ private:
 
   // global settings (settings.txt)
   std::string mModelsDir;
+  std::string mKitsDir;
   std::string mEncoding = "F16";
+  keybed::AudioFormat mKitAudioFormat = keybed::AudioFormat::Flac;
+  bool mWideMode = false;
   bool mKeepResident = true;
   double mChunkSecondsAt80 = 10.0;   // measured seconds per chunk at 80 steps
 
@@ -203,6 +218,14 @@ private:
   std::atomic<bool> mKitLoading{false};
   std::mutex mKitLoadMutex;
   LoadedKit mLoadedKit;   // guarded by mKitLoadMutex
+
+  std::thread mKitStorageMover;
+  std::atomic<bool> mKitStorageMoving{false};
+  std::mutex mKitStorageMutex;
+  bool mKitStorageMoveReady = false;
+  bool mKitStorageMoveSucceeded = false;
+  std::string mKitStorageMoveDestination;
+  std::string mKitStorageMoveError;
 
   mutable std::mutex mStatusMutex;
   std::string mStatus = "ready";

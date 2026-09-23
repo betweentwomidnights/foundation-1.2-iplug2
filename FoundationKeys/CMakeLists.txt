@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(FoundationKeys VERSION 0.1.0)
+project(FoundationKeys VERSION 0.1.1)
 
 # Dev builds also look for models in the sa3.cpp checkout's staging folder. Release builds turn this
 # off so no build-machine path ships in the binary: -DFOUNDATION_KEYS_DEV_MODELS=OFF.
@@ -15,12 +15,48 @@ if(WIN32)
   list(APPEND FOUNDATION_KEYS_PLATFORM_LIBS shell32 ole32)
 endif()
 
+# The same BSD-licensed libFLAC 1.4.3 encoder/decoder used by JUCE, vendored here so the
+# plugin can create and load FLAC kits without a machine-installed codec.
+set(FOUNDATION_KEYS_FLAC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/flac")
+set(_foundation_keys_flac_sources
+  ${FOUNDATION_KEYS_FLAC_DIR}/libFLAC/bitmath.c
+  ${FOUNDATION_KEYS_FLAC_DIR}/libFLAC/bitreader.c
+  ${FOUNDATION_KEYS_FLAC_DIR}/libFLAC/bitwriter.c
+  ${FOUNDATION_KEYS_FLAC_DIR}/libFLAC/cpu.c
+  ${FOUNDATION_KEYS_FLAC_DIR}/libFLAC/crc.c
+  ${FOUNDATION_KEYS_FLAC_DIR}/libFLAC/fixed.c
+  ${FOUNDATION_KEYS_FLAC_DIR}/libFLAC/float.c
+  ${FOUNDATION_KEYS_FLAC_DIR}/libFLAC/format.c
+  ${FOUNDATION_KEYS_FLAC_DIR}/libFLAC/lpc_flac.c
+  ${FOUNDATION_KEYS_FLAC_DIR}/libFLAC/lpc_intrin_neon.c
+  ${FOUNDATION_KEYS_FLAC_DIR}/libFLAC/md5.c
+  ${FOUNDATION_KEYS_FLAC_DIR}/libFLAC/memory.c
+  ${FOUNDATION_KEYS_FLAC_DIR}/libFLAC/stream_decoder.c
+  ${FOUNDATION_KEYS_FLAC_DIR}/libFLAC/stream_encoder.c
+  ${FOUNDATION_KEYS_FLAC_DIR}/libFLAC/stream_encoder_framing.c
+  ${FOUNDATION_KEYS_FLAC_DIR}/libFLAC/window_flac.c
+)
+set_source_files_properties(${_foundation_keys_flac_sources} PROPERTIES LANGUAGE CXX)
+add_library(foundation_keys_flac STATIC ${_foundation_keys_flac_sources})
+target_include_directories(foundation_keys_flac PRIVATE "${FOUNDATION_KEYS_FLAC_DIR}")
+if(MSVC)
+  target_compile_options(foundation_keys_flac PRIVATE "/FI${FOUNDATION_KEYS_FLAC_DIR}/BuildConfig.h")
+else()
+  target_compile_options(foundation_keys_flac PRIVATE "-include${FOUNDATION_KEYS_FLAC_DIR}/BuildConfig.h")
+endif()
+set_target_properties(foundation_keys_flac PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON POSITION_INDEPENDENT_CODE ON)
+if(UNIX)
+  target_link_libraries(foundation_keys_flac PUBLIC m)
+endif()
+
 iplug_add_plugin(${PROJECT_NAME}
   SOURCES
     FoundationKeys.cpp
     FoundationKeys.h
     KeybedControl.cpp
     KeybedControl.h
+    FlacAudio.cpp
+    FlacAudio.h
     KeybedKit.cpp
     KeybedKit.h
     KeybedRenderService.cpp
@@ -36,6 +72,7 @@ iplug_add_plugin(${PROJECT_NAME}
     resources/fonts/Roboto-Regular.ttf
   LINK
     iPlug2::Extras::Synth
+    foundation_keys_flac
     sa3_headers
     sa3_ui_theme
     ${FOUNDATION_KEYS_PLATFORM_LIBS}
@@ -78,6 +115,7 @@ option(FOUNDATION_KEYS_BUILD_TESTS "Build the headless FoundationKeys engine tes
 if(FOUNDATION_KEYS_BUILD_TESTS)
   add_executable(FoundationKeysEngineTest
     tests/KeybedEngineTest.cpp
+    FlacAudio.cpp
     KeybedKit.cpp
     KeybedRenderService.cpp
     Sa3Runtime.cpp
@@ -95,7 +133,7 @@ if(FOUNDATION_KEYS_BUILD_TESTS)
   if(MSVC)
     target_compile_options(FoundationKeysEngineTest PRIVATE /wd4068 /utf-8)
   endif()
-  target_link_libraries(FoundationKeysEngineTest PRIVATE sa3_headers ${FOUNDATION_KEYS_PLATFORM_LIBS})
+  target_link_libraries(FoundationKeysEngineTest PRIVATE foundation_keys_flac sa3_headers ${FOUNDATION_KEYS_PLATFORM_LIBS})
   set_target_properties(FoundationKeysEngineTest PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/out-test")
   foundation_keys_copy_runtime(FoundationKeysEngineTest)
 endif()

@@ -14,6 +14,8 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <string>
 #include <thread>
@@ -291,12 +293,27 @@ int main(int argc, char** argv)
     KitManifest manifest;
     std::string loadError;
     const auto loaded = LoadKitSamples(kitDir, manifest, loadError);
-    Check(loaded.size() == 6 && manifest.complete && manifest.seed == 7 && manifest.descriptor == job.layers[0],
-          "kit.json + WAVs reload (" + std::to_string(loaded.size()) + " notes)" + (loadError.empty() ? "" : ": " + loadError));
-    bool identical = loaded.size() == notes.size();
-    for (size_t i = 0; identical && i < loaded.size(); ++i)
-      identical = loaded[i]->frames == notes[i]->frames && loaded[i]->left == notes[i]->left;
-    Check(identical, "reloaded float WAVs are bit-identical");
+    Check(loaded.size() == 6 && manifest.complete && manifest.seed == 7 && manifest.descriptor == job.layers[0] &&
+              manifest.audioFormat == "flac",
+          "kit.json + FLAC samples reload (" + std::to_string(loaded.size()) + " notes)" +
+              (loadError.empty() ? "" : ": " + loadError));
+    double maxError = 0.0;
+    bool sameLength = loaded.size() == notes.size();
+    for (size_t i = 0; sameLength && i < loaded.size(); ++i)
+    {
+      sameLength = loaded[i]->frames == notes[i]->frames;
+      for (int frame = 0; sameLength && frame < loaded[i]->frames; ++frame)
+      {
+        maxError = std::max(maxError, std::fabs((double)loaded[i]->left[(size_t)frame] - notes[i]->left[(size_t)frame]));
+        maxError = std::max(maxError, std::fabs((double)loaded[i]->right[(size_t)frame] - notes[i]->right[(size_t)frame]));
+      }
+    }
+    Check(sameLength && maxError < 2e-7, "reloaded 24-bit FLAC stays within quantization error (" +
+                                            std::to_string(maxError) + ")");
+    std::ifstream sfz(std::filesystem::u8path(kitDir) / "kit.sfz");
+    const std::string sfzText((std::istreambuf_iterator<char>(sfz)), std::istreambuf_iterator<char>());
+    Check(sfzText.find(".flac") != std::string::npos && sfzText.find(".wav") == std::string::npos,
+          "SFZ regions point to FLAC samples");
   }
 
   std::printf("5. a three-layer keybed (RC's Main + Supports): per-layer seeds, folders, and mix\n");

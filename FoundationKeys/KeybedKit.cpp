@@ -1,4 +1,5 @@
 #include "KeybedKit.h"
+#include "FlacAudio.h"
 
 #include "sat/keybed.h"
 
@@ -240,6 +241,15 @@ std::string MigratedPath(const std::string& path)
 
 std::string KitsDirectory()
 {
+  const std::string configured = MigratedPath(LoadSetting("kits_dir"));
+  const fs::path dir = PathFromUtf8(configured.empty() ? DefaultKitsDirectory() : configured);
+  std::error_code ec;
+  fs::create_directories(dir, ec);
+  return ec ? std::string() : Utf8FromPath(dir);
+}
+
+std::string DefaultKitsDirectory()
+{
   const std::string app = AppDirectory();
   if (app.empty())
     return {};
@@ -276,9 +286,9 @@ std::string DefaultModelsDirectory()
   return ec ? std::string() : Utf8FromPath(dir);
 }
 
-std::string CreateKitDirectory(const std::string& descriptor, uint64_t seed)
+std::string CreateKitDirectory(const std::string& descriptor, uint64_t seed, const std::string& kitsDirectory)
 {
-  const std::string kits = KitsDirectory();
+  const std::string kits = kitsDirectory.empty() ? KitsDirectory() : kitsDirectory;
   if (kits.empty())
     return {};
   const std::vector<std::string> body = kb::split_descriptor_tokens(descriptor).body;
@@ -307,8 +317,159 @@ std::string CreateKitDirectory(const std::string& descriptor, uint64_t seed)
   std::error_code ec;
   for (int n = 2; fs::exists(dir, ec); ++n)
     dir = PathFromUtf8(kits) / (std::string(stamp) + "-" + slug + std::to_string(seed) + "-" + std::to_string(n));
-  fs::create_directories(dir, ec);   // the render adds chunks/ beside the WAVs it writes
+  fs::create_directories(dir, ec);   // the render adds chunks/ beside the note samples it writes
   return ec ? std::string() : Utf8FromPath(dir);
+}
+
+bool CopyKitsDirectory(const std::string& source, const std::string& destination, std::string& error)
+{
+  const fs::path from = PathFromUtf8(source);
+  const fs::path to = PathFromUtf8(destination);
+  if (destination.empty())
+  {
+    error = "the kit folder path is empty";
+    return false;
+  }
+  std::error_code ec;
+  fs::create_directories(to, ec);
+  if (ec || !fs::is_directory(to, ec))
+  {
+    error = "cannot create the selected kit folder";
+    return false;
+  }
+
+  const fs::path probeBase = to / ".foundation-keys-write-check";
+  fs::path probe = probeBase;
+  for (int i = 1; fs::exists(probe, ec) && !ec; ++i)
+    probe = fs::path(probeBase.string() + "-" + std::to_string(i));
+  if (ec)
+  {
+    error = "cannot inspect the selected kit folder: " + ec.message();
+    return false;
+  }
+  {
+    std::ofstream test(probe, std::ios::binary | std::ios::out);
+    if (!test)
+    {
+      error = "the selected kit folder is not writable";
+      return false;
+    }
+    test << "ok";
+    if (!test)
+    {
+      error = "cannot write to the selected kit folder";
+      test.close();
+      fs::remove(probe, ec);
+      return false;
+    }
+  }
+  fs::remove(probe, ec);
+
+  if (source.empty() || !fs::is_directory(from, ec))
+    return true;
+
+  const fs::path fromCanonical = fs::weakly_canonical(from, ec);
+  if (ec)
+  {
+    error = "cannot resolve the current kit folder: " + ec.message();
+    return false;
+  }
+  const fs::path toCanonical = fs::weakly_canonical(to, ec);
+  if (ec)
+  {
+    error = "cannot resolve the selected kit folder: " + ec.message();
+    return false;
+  }
+  if (fs::equivalent(fromCanonical, toCanonical, ec))
+    return true;
+  const auto isWithin = [](const fs::path& parent, const fs::path& candidate) {
+    if (parent == candidate)
+      return true;
+    const fs::path relative = candidate.lexically_relative(parent);
+    return !relative.empty() && !relative.is_absolute() && *relative.begin() != "..";
+  };
+  if (isWithin(fromCanonical, toCanonical) || isWithin(toCanonical, fromCanonical))
+  {
+    error = "choose a kit folder outside the current kit folder";
+    return false;
+  }
+
+  fs::recursive_directory_iterator it(from, fs::directory_options::none, ec), end;
+  if (ec)
+  {
+    error = "cannot read the current kit folder: " + ec.message();
+    return false;
+  }
+  for (; it != end; it.increment(ec))
+  {
+    if (ec)
+    {
+      error = "cannot scan the current kit folder: " + ec.message();
+      return false;
+    }
+    if (it->is_symlink(ec))
+    {
+      if (ec)
+      {
+        error = "cannot inspect a kit item: " + ec.message();
+        return false;
+      }
+      if (it->is_directory(ec))
+        it.disable_recursion_pending();
+      continue;
+    }
+    if (ec)
+    {
+      error = "cannot inspect a kit item: " + ec.message();
+      return false;
+    }
+    const fs::path relative = fs::relative(it->path(), from, ec);
+    if (ec)
+    {
+      error = "cannot determine a kit item's location: " + ec.message();
+      return false;
+    }
+    const fs::path target = to / relative;
+    if (it->is_directory(ec))
+    {
+      fs::create_directories(target, ec);
+      if (ec)
+      {
+        error = "cannot create kit subfolder: " + ec.message();
+        return false;
+      }
+    }
+    else if (it->is_regular_file(ec))
+    {
+      if (ec)
+      {
+        error = "cannot inspect a kit file: " + ec.message();
+        return false;
+      }
+      if (!fs::exists(target, ec) && !ec)
+      {
+        fs::create_directories(target.parent_path(), ec);
+        if (!ec)
+          fs::copy_file(it->path(), target, fs::copy_options::none, ec);
+      }
+      if (ec)
+      {
+        error = "cannot copy kit file " + Utf8FromPath(relative) + ": " + ec.message();
+        return false;
+      }
+    }
+    if (ec)
+    {
+      error = "cannot inspect a kit item: " + ec.message();
+      return false;
+    }
+  }
+  if (ec)
+  {
+    error = "cannot finish copying the current kit folder: " + ec.message();
+    return false;
+  }
+  return true;
 }
 
 std::string LoadSetting(const std::string& key)
@@ -360,7 +521,17 @@ bool SaveSetting(const std::string& key, const std::string& value)
 
 std::string NoteFileName(int midi)
 {
-  return kb::note_filename(midi) + ".wav";
+  return NoteFileName(midi, AudioFormat::Wav);
+}
+
+std::string AudioFileExtension(AudioFormat format)
+{
+  return format == AudioFormat::Flac ? ".flac" : ".wav";
+}
+
+std::string NoteFileName(int midi, AudioFormat format)
+{
+  return kb::note_filename(midi) + AudioFileExtension(format);
 }
 
 bool WritePlanarWav(const std::string& path, const float* planar, int channels, int frames, int sampleRate,
@@ -400,6 +571,21 @@ bool WriteNoteWav(const std::string& path, const NoteSample& note, std::string& 
   std::vector<float> planar(note.left);
   planar.insert(planar.end(), note.right.begin(), note.right.end());
   return WritePlanarWav(path, planar.data(), 2, note.frames, note.sampleRate, error);
+}
+
+bool WriteNoteAudio(const std::string& path, const NoteSample& note, AudioFormat format, std::string& error)
+{
+  std::vector<float> planar(note.left);
+  planar.insert(planar.end(), note.right.begin(), note.right.end());
+  return WritePlanarAudio(path, planar.data(), 2, note.frames, note.sampleRate, format, error);
+}
+
+bool WritePlanarAudio(const std::string& path, const float* planar, int channels, int frames, int sampleRate,
+                      AudioFormat format, std::string& error)
+{
+  if (format == AudioFormat::Flac)
+    return WritePlanarFlac(path, planar, channels, frames, sampleRate, error);
+  return WritePlanarWav(path, planar, channels, frames, sampleRate, error);
 }
 
 NoteSamplePtr ReadNoteWav(const std::string& path, int midi, std::string& error, int layer, bool layered)
@@ -475,6 +661,16 @@ NoteSamplePtr ReadNoteWav(const std::string& path, int midi, std::string& error,
   return note;
 }
 
+NoteSamplePtr ReadNoteAudio(const std::string& path, int midi, std::string& error, int layer, bool layered)
+{
+  std::string extension = PathFromUtf8(path).extension().string();
+  std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) {
+    return (char)std::tolower(c);
+  });
+  return extension == ".flac" ? ReadNoteFlac(path, midi, error, layer, layered)
+                               : ReadNoteWav(path, midi, error, layer, layered);
+}
+
 bool WriteKitManifest(const std::string& kitDir, const KitManifest& m, std::string& error)
 {
   std::ofstream out(PathFromUtf8(kitDir) / "kit.json", std::ios::binary | std::ios::trunc);
@@ -506,6 +702,7 @@ bool WriteKitManifest(const std::string& kitDir, const KitManifest& m, std::stri
       << numbers
       << "  \"model\": \"" << JsonEscape(m.model) << "\",\n"
       << "  \"encoding\": \"" << JsonEscape(m.encoding) << "\",\n"
+      << "  \"audio_format\": \"" << JsonEscape(m.audioFormat) << "\",\n"
       << "  \"range\": \"" << JsonEscape(m.range) << "\",\n"
       << "  \"label_midis\": " << JoinInts(m.labelMidis) << ",\n"
       << "  \"sounding_midis\": " << JoinInts(m.soundingMidis) << ",\n"
@@ -546,6 +743,7 @@ bool ReadKitManifest(const std::string& kitDir, KitManifest& m, std::string& err
   m.sigmaMax = std::strtof(get("sigma_max").c_str(), nullptr);
   m.model = JsonString(get("model"));
   m.encoding = JsonString(get("encoding"));
+  m.audioFormat = JsonString(get("audio_format")) == "flac" ? "flac" : "wav";
   m.range = JsonString(get("range"));
   m.labelMidis.clear();
   for (const auto& item : JsonArrayItems(get("label_midis")))
@@ -563,11 +761,12 @@ bool ReadKitManifest(const std::string& kitDir, KitManifest& m, std::string& err
   return true;
 }
 
-bool WriteKitSfz(const std::string& kitDir, const std::vector<int>& soundingMidis, std::string& error)
+bool WriteKitSfz(const std::string& kitDir, const std::vector<int>& soundingMidis, AudioFormat audioFormat,
+                 std::string& error)
 {
   std::vector<kb::SfzRegion> regions;
   for (int midi : soundingMidis)
-    regions.push_back({NoteFileName(midi), midi});
+    regions.push_back({NoteFileName(midi, audioFormat), midi});
   const std::string text = kb::sfz_text(regions);
   std::ofstream out(PathFromUtf8(kitDir) / "kit.sfz", std::ios::binary | std::ios::trunc);
   out << text;
@@ -580,7 +779,7 @@ bool WriteKitSfz(const std::string& kitDir, const std::vector<int>& soundingMidi
 }
 
 bool WriteLayeredKitSfz(const std::string& kitDir, const std::vector<std::vector<int>>& layerMidis,
-                        std::string& error)
+                        AudioFormat audioFormat, std::string& error)
 {
   std::string text = "// Auto-generated Foundation-1.2 layered keybed export (sa3.cpp)\n";
   char line[200];
@@ -596,7 +795,7 @@ bool WriteLayeredKitSfz(const std::string& kitDir, const std::vector<std::vector
     for (int midi : midis)
     {
       std::snprintf(line, sizeof line, "<region> sample=%s/%s lokey=%d hikey=%d pitch_keycenter=%d\n",
-                    kb::kLayerDirNames[l], NoteFileName(midi).c_str(), midi, midi, midi);
+                    kb::kLayerDirNames[l], NoteFileName(midi, audioFormat).c_str(), midi, midi, midi);
       text += line;
     }
   }
@@ -625,15 +824,22 @@ std::vector<NoteSamplePtr> LoadLayerSamples(const std::string& dir, int layer, b
       keys.push_back(midi);
   for (int midi : keys)
   {
-    const fs::path path = PathFromUtf8(dir) / PathFromUtf8(NoteFileName(midi));
-    std::error_code ec;
-    if (!fs::is_regular_file(path, ec))
-      continue;
-    std::string noteError;
-    if (auto note = ReadNoteWav(Utf8FromPath(path), midi, noteError, layer, layered))
-      notes.push_back(std::move(note));
-    else
-      error = noteError;
+    const AudioFormat preferred = manifest.audioFormat == "flac" ? AudioFormat::Flac : AudioFormat::Wav;
+    const AudioFormat formats[] = {preferred, preferred == AudioFormat::Flac ? AudioFormat::Wav : AudioFormat::Flac};
+    for (AudioFormat format : formats)
+    {
+      const fs::path path = PathFromUtf8(dir) / PathFromUtf8(NoteFileName(midi, format));
+      std::error_code ec;
+      if (!fs::is_regular_file(path, ec))
+        continue;
+      std::string noteError;
+      if (auto note = ReadNoteAudio(Utf8FromPath(path), midi, noteError, layer, layered))
+      {
+        notes.push_back(std::move(note));
+        break;
+      }
+      error = std::move(noteError);
+    }
   }
   return notes;
 }
