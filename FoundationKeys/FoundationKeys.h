@@ -151,6 +151,14 @@ public:
   keybed::NoteSamplePtr SampleForKey(int key) const;
   std::string KitDir() const { return mKitDir; }
   std::string KitLabel() const;
+  int KitHistoryPosition() const { return mHistoryIndex < 0 ? 0 : mHistoryIndex + 1; }
+  int KitHistoryCount() const { return (int)mKitHistory.size(); }
+  std::string SuggestedKitName() const;
+  bool BrowseKit(int direction);
+  // Writes a complete kit into a named folder after the user confirms the name.
+  std::string SaveCurrentKit(const std::string& name);
+  // Writes only the requested sample when its waveform is dragged.
+  std::string ExportNoteForDrag(int key);
   // Reads the kit's WAVs or FLACs on a background thread; OnIdle installs them. adoptSettings takes the kit's
   // descriptor/seed (a user load); false when restoring saved state.
   void LoadKitFromFolder(const std::string& dir, bool adoptSettings = true);
@@ -204,6 +212,16 @@ private:
   keybed::KitManifest mManifest;
   bool mReplaceBankOnNextNote = false;
   std::string mJobDescriptor;   // descriptor of the running job, remembered with its seed
+  std::vector<keybed::NoteSamplePtr> mBuildingNotes;
+  struct MemoryKit
+  {
+    std::vector<keybed::NoteSamplePtr> notes;
+    keybed::KitManifest manifest;
+    std::string dir;
+    std::string label;
+  };
+  std::vector<MemoryKit> mKitHistory;
+  int mHistoryIndex = -1;
 
   struct LoadedKit
   {

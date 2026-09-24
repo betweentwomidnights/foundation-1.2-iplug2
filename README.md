@@ -21,11 +21,13 @@ into 3 s samples, one per key, and become playable as each pass lands. Up to two
 (`edit` > `+ layer`) render after the main one and mix at playback, at RC's volumes and seeds.
 
 The model renders an octave below its prompt labels, so keys are mapped by sounding pitch (MIDI 60 plays
-middle C). Kits save to `Documents/Foundation Keys/kits` as FLAC samples plus a `kit.sfz` by default;
-the settings screen also offers WAV export and lets you choose an external kit folder. Changing the
-folder copies existing kits and keeps the previous folder as a backup. The settings screen also
-offers a wide layout with larger generation and playback controls above a full-width keyboard. Drag
-a note or a kit out of the plugin to use it elsewhere.
+middle C). Generated kits stay in RAM while the plugin is open. Use the left and right arrows to
+switch between them. **Save** asks for a kit name, then writes the selected kit as FLAC samples plus
+a `kit.sfz` in a folder with that name under the chosen kit storage folder. Existing names receive a
+numbered suffix. Dragging a note writes only that clip. Unsaved kits disappear when the plugin closes.
+Settings offers WAV export, an external kit folder, and a wide layout with larger text and a
+full-width keyboard. Changing the kit folder copies previously saved kits and keeps the old folder
+as a backup. You can drag a saved full kit out of the plugin to use it elsewhere.
 
 ## 9/23/26 v0.1.1 update
 
@@ -35,6 +37,14 @@ Quality of life improvements:
 - Wide mode for our friend Kostas, with larger controls and a full-width playable keyboard.
 - Save kits wherever you want, including an external drive. Changing the kit folder copies existing
   kits and keeps the previous folder as a backup.
+
+## 9/24/26 v0.1.2 update
+
+- Larger text throughout wide mode, including edit controls, settings, and the sound editor.
+- Keep generated kits in RAM until saved; dragging a note writes only that clip.
+- Browse generated kits with left and right arrows.
+- Name each kit when saving it.
+- Windows CUDA and Vulkan downloads now include CLAP alongside VST3 and standalone.
 
 ## Models
 

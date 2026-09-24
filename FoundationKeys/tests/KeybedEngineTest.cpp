@@ -1,5 +1,5 @@
 // Headless end-to-end check of the instrument path the plugin uses:
-//   libsa3 (runtime-loaded) -> KeybedRenderService -> kit on disk -> KeybedBank -> MIDI -> voices.
+//   libsa3 (runtime-loaded) -> KeybedRenderService -> RAM -> explicit kit export -> KeybedBank -> MIDI.
 //
 // Usage: FoundationKeysEngineTest MODELS_DIR [STEPS] [ENCODING]
 // Renders a six-note sine preview, plays every key through the sampler at a 48 kHz host rate, and
@@ -191,7 +191,10 @@ int main(int argc, char** argv)
         "preview finished in " + std::to_string(renderSeconds) + " s: " + (ends.empty() ? "timeout" : ends.back().message));
   if (ends.empty() || ends.back().kind != KeybedEvent::Kind::Finished)
     return 1;
-  const std::string kitDir = ends.back().kitDir;
+  const std::string kitDir = CreateKitDirectory(ends.back().manifest.descriptor, ends.back().manifest.seed,
+                                                job.kitsDirectory);
+  Check(!kitDir.empty() && SaveKitSamples(kitDir, ends.back().manifest, notes, job.audioFormat, error),
+        "explicit kit export" + (error.empty() ? std::string() : ": " + error));
   service.Collect(true);
   Check(notes.size() == 6, "six notes arrived incrementally (" + std::to_string(notes.size()) + ")");
   Check(ends.back().seed == 7, "seed 7 reported");
@@ -336,7 +339,10 @@ int main(int argc, char** argv)
       tagged = tagged && note->layered;
     Check(tagged, "every note is tagged as part of a layered kit");
 
-    const std::string layeredDir = ends.empty() ? std::string() : ends.back().kitDir;
+    const std::string layeredDir = ends.empty() ? std::string() :
+      CreateKitDirectory(ends.back().manifest.descriptor, ends.back().manifest.seed, layered.kitsDirectory);
+    Check(!layeredDir.empty() && SaveKitSamples(layeredDir, ends.back().manifest, layerNotes,
+                                                layered.audioFormat, error), "explicit layered kit export");
     KitManifest manifest;
     std::string loadError;
     const auto loaded = LoadKitSamples(layeredDir, manifest, loadError);

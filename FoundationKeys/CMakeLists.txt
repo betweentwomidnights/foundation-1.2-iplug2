@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(FoundationKeys VERSION 0.1.1)
+project(FoundationKeys VERSION 0.1.2)
 
 # Dev builds also look for models in the sa3.cpp checkout's staging folder. Release builds turn this
 # off so no build-machine path ships in the binary: -DFOUNDATION_KEYS_DEV_MODELS=OFF.

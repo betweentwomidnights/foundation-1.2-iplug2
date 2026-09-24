@@ -34,7 +34,7 @@ public:
 
 private:
   enum class Popup { None, PreviewRoot, Family, Type, Second, Knob };
-  enum class Edit { None, Descriptor, Seed, NewExtra, Extra };
+  enum class Edit { None, Descriptor, Seed, NewExtra, Extra, KitName };
   enum class Drag { None, Steps, Cfg, Param, Key, FileOut, Knob };
 
   // Sound sheet: stepped knobs over a vocabulary, and the buttons around them.
@@ -125,7 +125,8 @@ private:
   IRECT mDragRect;
   int mPressedKey = -1;
   IPopupMenu mMenu;
-  std::string mDragOutPath;   // WAV or kit folder armed by a mouse-down, started after a short drag
+  int mDragOutKey = -1;
+  bool mDragOutKit = false;
   IRECT mDragOutRect;
   float mDragStartX = 0.f, mDragStartY = 0.f;
   int mWaveformKey = -1;
@@ -140,7 +141,7 @@ private:
   std::vector<ParamSlider> mParamSliders;
   IRECT mOctaveDownRect, mOctaveUpRect, mFillGapsRect;
   std::array<IRECT, 2> mVoiceModeRects{};
-  IRECT mRevealKitRect, mLoadKitRect, mKitLabelRect, mWaveformRect;
+  IRECT mLoadKitRect, mSaveKitRect, mPrevKitRect, mNextKitRect, mKitLabelRect, mWaveformRect;
   IRECT mModelsFolderRect, mKitsFolderRect, mResidentRect, mReleaseRect, mCloseRect;
   IRECT mCompactLayoutRect, mWideLayoutRect, mFlacFormatRect, mWavFormatRect;
   std::array<IRECT, 4> mEncodingRects{};

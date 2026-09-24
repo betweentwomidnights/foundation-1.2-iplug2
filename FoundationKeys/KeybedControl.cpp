@@ -49,7 +49,8 @@ bool IsBlackKey(int midi)
 
 IText Label(float size, const IColor& color, EAlign align = EAlign::Near)
 {
-  return IText(size, color, kFont, align, EVAlign::Middle);
+  const float scale = size > 20.f ? 1.f + (TextScale - 1.f) * 0.5f : TextScale;
+  return IText(size * scale, color, kFont, align, EVAlign::Middle);
 }
 
 int64_t ParseSeed(const char* text, int64_t fallback)
@@ -109,6 +110,7 @@ KeybedControl::KeybedControl(const IRECT& bounds, FoundationKeys& plugin)
 
 void KeybedControl::Draw(IGraphics& g)
 {
+  TextScale = mPlugin.WideMode() ? (mSettingsOpen ? 1.6f : mSoundOpen ? 1.65f : 1.3f) : 1.f;
   g.FillRect(Background(), mRECT);
   const IRECT shell = mRECT.GetPadded(-14.f);
   g.FillRoundRect(Panel(), shell, 7.f);
@@ -365,7 +367,7 @@ float KeybedControl::DrawKeyboard(IGraphics& g, float left, float right, float y
     g.FillRect(fillFor(k, false), r.GetPadded(-0.5f));
     g.DrawRect(FrameSoft(), r);
     if (k % 12 == 0)
-      g.DrawText(IText(wide ? 12.f : 9.f, TextDim(), kFont, EAlign::Center, EVAlign::Bottom),
+      g.DrawText(IText((wide ? 12.f : 9.f) * TextScale, TextDim(), kFont, EAlign::Center, EVAlign::Bottom),
                  kb::midi_to_note_name(k).c_str(),
                  IRECT(r.L - 4.f, r.B - (wide ? 19.f : 14.f), r.R + 4.f, r.B - 2.f));
     ++white;
@@ -424,8 +426,8 @@ float KeybedControl::DrawNoteWaveform(IGraphics& g, float left, float right, flo
     g.DrawLine(Red(), x, mid - mPeaks[(size_t)i].second * half, x, mid - mPeaks[(size_t)i].first * half, nullptr, 1.f);
   }
   char info[64];
-  std::snprintf(info, sizeof info, "%s · %.2fs%s", kb::midi_to_note_name(key).c_str(),
-                (double)note->frames / note->sampleRate, mPlugin.NoteFilePath(key).empty() ? "" : " · drag to export");
+  std::snprintf(info, sizeof info, "%s · %.2fs · drag to export", kb::midi_to_note_name(key).c_str(),
+                (double)note->frames / note->sampleRate);
   g.DrawText(Label(wide ? 12.f : 10.f, TextDim(), EAlign::Far), info,
              IRECT(box.L, box.T + 2.f, box.R - 8.f, box.T + (wide ? 20.f : 16.f)));
   return box.B + (wide ? 12.f : 10.f);
@@ -527,18 +529,28 @@ float KeybedControl::DrawLayerMix(IGraphics& g, float left, float right, float y
 float KeybedControl::DrawKit(IGraphics& g, float left, float right, float y)
 {
   const bool wide = mPlugin.WideMode();
-  const IRECT row(left, y, right, y + (wide ? 38.f : 30.f));
+  const IRECT row(left, y, right, y + (wide ? 42.f : 34.f));
   g.FillRoundRect(PanelDark(), row, 4.f);
   g.DrawRoundRect(FrameSoft(), row, 4.f);
-  mLoadKitRect = IRECT(row.R - (wide ? 96.f : 74.f), row.T + 4.f, row.R - 6.f, row.B - 4.f);
-  mRevealKitRect = IRECT(mLoadKitRect.L - (wide ? 40.f : 30.f), row.T + 4.f, mLoadKitRect.L - 6.f, row.B - 4.f);
-  DrawButton(g, mLoadKitRect, "load kit", kFont, false, true, wide ? 16.f : BodyTextSize);
-  const bool hasKit = !mPlugin.KitDir().empty();
-  DrawFolderIcon(g, mRevealKitRect, hasKit ? COLOR_WHITE : TextFaint());
-  mKitLabelRect = IRECT(row.L + 8.f, row.T, mRevealKitRect.L - 6.f, row.B);
+  const float buttonW = wide ? 76.f : 59.f;
+  const float arrowW = wide ? 34.f : 28.f;
+  mLoadKitRect = IRECT(row.R - buttonW - 5.f, row.T + 4.f, row.R - 5.f, row.B - 4.f);
+  mSaveKitRect = IRECT(mLoadKitRect.L - buttonW - 5.f, row.T + 4.f, mLoadKitRect.L - 5.f, row.B - 4.f);
+  mNextKitRect = IRECT(mSaveKitRect.L - arrowW - 5.f, row.T + 4.f, mSaveKitRect.L - 5.f, row.B - 4.f);
+  mPrevKitRect = IRECT(mNextKitRect.L - arrowW - 4.f, row.T + 4.f, mNextKitRect.L - 4.f, row.B - 4.f);
+  const int position = mPlugin.KitHistoryPosition();
+  const int count = mPlugin.KitHistoryCount();
+  const bool saved = position > 0 && !mPlugin.KitDir().empty();
+  DrawButton(g, mLoadKitRect, "load", kFont, false, !mPlugin.Busy(), wide ? 15.f : 13.f);
+  DrawButton(g, mSaveKitRect, saved ? "saved" : "save", kFont, false,
+             position > 0 && !saved && !mPlugin.Busy(), wide ? 15.f : 13.f);
+  DrawButton(g, mPrevKitRect, "<", kFont, false, position > 1, wide ? 17.f : 15.f);
+  DrawButton(g, mNextKitRect, ">", kFont, false, count > 0 && position < count, wide ? 17.f : 15.f);
+  mKitLabelRect = IRECT(row.L + 8.f, row.T, mPrevKitRect.L - 7.f, row.B);
   const std::string label = mPlugin.LoadingKit() ? "loading kit..." : mPlugin.KitLabel();
-  g.DrawText(Label(wide ? 14.f : 11.f, hasKit ? COLOR_WHITE : TextDim()),
-             Compact(label, FitChars(mKitLabelRect.W() - 8.f, wide ? 7.4f : 6.f)).c_str(), mKitLabelRect);
+  const std::string indexed = position > 0 ? std::to_string(position) + "/" + std::to_string(count) + " " + label : label;
+  g.DrawText(Label(wide ? 16.f : 13.f, position > 0 ? COLOR_WHITE : TextDim()),
+             Compact(indexed, FitChars(mKitLabelRect.W() - 8.f, wide ? 8.f : 6.5f)).c_str(), mKitLabelRect);
   return row.B + (wide ? 10.f : 8.f);
 }
 
@@ -553,7 +565,7 @@ void KeybedControl::DrawSettings(IGraphics& g, const IRECT& shell)
   y += 42.f;
 
   // models: pick a tier, then a folder that has it or a download into that folder
-  IRECT card(left, y, right, y + 196.f);
+  IRECT card(left, y, right, y + (mPlugin.WideMode() ? 208.f : 196.f));
   g.FillRoundRect(PanelDark(), card, 5.f);
   g.DrawRoundRect(FrameSoft(), card, 5.f);
   g.DrawText(Label(14.f, COLOR_WHITE), "Foundation-1.2 Keybeds models", IRECT(card.L + 12.f, card.T + 8.f, card.R - 12.f, card.T + 30.f));
@@ -596,7 +608,7 @@ void KeybedControl::DrawSettings(IGraphics& g, const IRECT& shell)
     g.DrawText(Label(11.f, present ? Green() : Red()), present ? "all three files found" : "not in this folder yet",
                IRECT(mDownloadRect.R + 10.f, mDownloadRect.T, card.R - 12.f, mDownloadRect.B));
   }
-  g.DrawMultiLineText(IText(10.f, TextFaint(), kFont, EAlign::Near, EVAlign::Top),
+  g.DrawMultiLineText(IText(mPlugin.WideMode() ? 16.f : 10.f, TextFaint(), kFont, EAlign::Near, EVAlign::Top),
                       "downloads from huggingface.co/thepatch/foundation-1.2-keybeds-GGUF into the folder above "
                       "and resume if interrupted. or choose a folder that already has the files.",
                       IRECT(card.L + 12.f, card.T + 164.f, card.R - 12.f, card.B - 4.f));
@@ -633,7 +645,9 @@ void KeybedControl::DrawSettings(IGraphics& g, const IRECT& shell)
   g.DrawText(Label(10.f, TextFaint()),
              Compact("FLAC lossless; WAV has broader sampler support", FitChars(formatHelp.W(), 5.2f)).c_str(),
              formatHelp);
-  g.DrawText(Label(9.f, TextFaint()), "changing folders copies existing kits and keeps the old folder as a backup",
+  g.DrawText(Label(11.f, TextFaint()), mPlugin.WideMode()
+             ? "generated kits stay in RAM until saved; unsaved kits disappear when the plugin closes"
+             : "unsaved RAM kits disappear when the plugin closes",
              IRECT(card.L + 12.f, card.T + 118.f, card.R - 12.f, card.T + 136.f));
   y = card.B + 12.f;
 
@@ -642,7 +656,7 @@ void KeybedControl::DrawSettings(IGraphics& g, const IRECT& shell)
   g.FillRoundRect(PanelDark(), card, 5.f);
   g.DrawRoundRect(FrameSoft(), card, 5.f);
   g.DrawText(Label(14.f, COLOR_WHITE), "model lifecycle", IRECT(card.L + 12.f, card.T + 8.f, card.R - 12.f, card.T + 30.f));
-  g.DrawText(Label(10.f, TextDim()), "models always stay loaded across the chunks of one build",
+  g.DrawText(Label(11.f, TextDim()), "models always stay loaded across the chunks of one build",
              IRECT(card.L + 12.f, card.T + 30.f, card.R - 12.f, card.T + 46.f));
   DrawToggle(g, IRECT(card.L + 12.f, card.T + 52.f, card.L + 220.f, card.T + 80.f), "keep resident between builds",
              mPlugin.KeepResident(), mResidentRect);
@@ -655,11 +669,11 @@ void KeybedControl::DrawSettings(IGraphics& g, const IRECT& shell)
   g.FillRoundRect(PanelDark(), card, 5.f);
   g.DrawRoundRect(FrameSoft(), card, 5.f);
   g.DrawText(Label(14.f, COLOR_WHITE), "how keys are made", IRECT(card.L + 12.f, card.T + 8.f, card.R - 12.f, card.T + 30.f));
-  g.DrawMultiLineText(IText(10.f, TextDim(), kFont, EAlign::Near, EVAlign::Top),
+  g.DrawMultiLineText(IText(mPlugin.WideMode() ? 18.f : 10.f, TextDim(), kFont, EAlign::Near, EVAlign::Top),
                       "each chunk renders six chromatic notes in one 20 s pass with one shared seed, then "
                       "slices them into 3 s samples (RoyalCities' keybed recipe). the model renders one "
                       "octave below its prompt labels, so samples are keyed by their real pitch: key 60 "
-                      "plays middle C. kits include an .sfz and are saved to the selected kit folder.",
+                      "plays middle C. save a kit to export its samples and .sfz to the selected folder.",
                       IRECT(card.L + 12.f, card.T + 34.f, card.R - 12.f, card.B - 6.f));
   y = card.B + 12.f;
 
@@ -752,6 +766,7 @@ void KeybedControl::DrawDropButton(IGraphics& g, const IRECT& bounds, const char
 
 void KeybedControl::OnMouseDown(float x, float y, const IMouseMod& mod)
 {
+  TextScale = mPlugin.WideMode() ? (mSettingsOpen ? 1.6f : mSoundOpen ? 1.65f : 1.3f) : 1.f;
   mDrag = Drag::None;
   if (mSettingsOpen)
   {
@@ -807,7 +822,7 @@ void KeybedControl::OnMouseDown(float x, float y, const IMouseMod& mod)
   if (mDescriptorRect.Contains(x, y) && GetUI())
   {
     mEdit = Edit::Descriptor;
-    GetUI()->CreateTextEntry(*this, IText(mPlugin.WideMode() ? 16.f : 13.f, COLOR_WHITE, kFont, EAlign::Near, EVAlign::Middle).WithTEColors(PanelDark(), COLOR_WHITE),
+    GetUI()->CreateTextEntry(*this, IText((mPlugin.WideMode() ? 16.f : 13.f) * TextScale, COLOR_WHITE, kFont, EAlign::Near, EVAlign::Middle).WithTEColors(PanelDark(), COLOR_WHITE),
                              mDescriptorRect, mPlugin.Descriptor().c_str(), 0);
     return;
   }
@@ -825,7 +840,7 @@ void KeybedControl::OnMouseDown(float x, float y, const IMouseMod& mod)
   {
     mEdit = Edit::Seed;
     const int64_t seed = mPlugin.UseSeed() ? mPlugin.SeedValue() : (int64_t)(mPlugin.LastSeed() & 0x7fffffffffffffffull);
-    GetUI()->CreateTextEntry(*this, IText(mPlugin.WideMode() ? 14.f : 11.f, COLOR_WHITE, kFont, EAlign::Near, EVAlign::Middle).WithTEColors(PanelDark(), COLOR_WHITE),
+    GetUI()->CreateTextEntry(*this, IText((mPlugin.WideMode() ? 14.f : 11.f) * TextScale, COLOR_WHITE, kFont, EAlign::Near, EVAlign::Middle).WithTEColors(PanelDark(), COLOR_WHITE),
                              mSeedFieldRect, std::to_string(seed).c_str(), 0);
     return;
   }
@@ -886,27 +901,40 @@ void KeybedControl::OnMouseDown(float x, float y, const IMouseMod& mod)
     SetDirty(false);
     return;
   }
-  auto armDragOut = [&](const std::string& path, const IRECT& rect) {
-    if (path.empty())
-      return false;
+  auto armDragOut = [&](const IRECT& rect, int key, bool kit) {
     mDrag = Drag::FileOut;
-    mDragOutPath = path;
+    mDragOutKey = key;
+    mDragOutKit = kit;
     mDragOutRect = rect;
     mDragStartX = x;
     mDragStartY = y;
-    return true;
   };
-  if (mWaveformRect.Contains(x, y) && mWaveformKey >= 0 && armDragOut(mPlugin.NoteFilePath(mWaveformKey), mWaveformRect))
-    return;
-  if (mKitLabelRect.Contains(x, y) && armDragOut(mPlugin.KitDir(), mKitLabelRect))
-    return;
-  if (mRevealKitRect.Contains(x, y) && GetUI() && !mPlugin.KitDir().empty())
+  if (mPrevKitRect.Contains(x, y)) { mPlugin.BrowseKit(-1); SetDirty(false); return; }
+  if (mNextKitRect.Contains(x, y)) { mPlugin.BrowseKit(1); SetDirty(false); return; }
+  if (mSaveKitRect.Contains(x, y))
   {
-    WDL_String path(mPlugin.KitDir().c_str());
-    GetUI()->RevealPathInExplorerOrFinder(path, false);
+    if (GetUI() && mPlugin.KitHistoryPosition() > 0 && mPlugin.KitDir().empty() && !mPlugin.Busy())
+    {
+      mEdit = Edit::KitName;
+      const IRECT entry(mKitLabelRect.L, mKitLabelRect.T, mLoadKitRect.R, mKitLabelRect.B);
+      GetUI()->CreateTextEntry(*this,
+        IText(mPlugin.WideMode() ? 19.f : 15.f, COLOR_WHITE, kFont, EAlign::Near, EVAlign::Middle)
+          .WithTEColors(PanelDark(), COLOR_WHITE),
+        entry, mPlugin.SuggestedKitName().c_str(), 0);
+    }
     return;
   }
-  if (mLoadKitRect.Contains(x, y))
+  if (mWaveformRect.Contains(x, y) && mWaveformKey >= 0)
+  {
+    armDragOut(mWaveformRect, mWaveformKey, false);
+    return;
+  }
+  if (mKitLabelRect.Contains(x, y) && !mPlugin.KitDir().empty())
+  {
+    armDragOut(mKitLabelRect, -1, true);
+    return;
+  }
+  if (mLoadKitRect.Contains(x, y) && !mPlugin.Busy())
   {
     const std::string dir = PickDirectory(keybed::KitsDirectory(), "Choose a kit folder");   // every kit side by side
     if (!dir.empty()) mPlugin.LoadKitFromFolder(dir);
@@ -952,10 +980,10 @@ void KeybedControl::OnMouseDrag(float x, float y, float dX, float dY, const IMou
     case Drag::FileOut:
       if (std::hypot(x - mDragStartX, y - mDragStartY) > 8.f && GetUI())
       {
-        const std::string path = mDragOutPath;
+        const std::string path = mDragOutKit ? mPlugin.KitDir() : mPlugin.ExportNoteForDrag(mDragOutKey);
         mDrag = Drag::None;
-        mDragOutPath.clear();
-        GetUI()->InitiateExternalFileDragDrop(path.c_str(), mDragOutRect);
+        if (!path.empty())
+          GetUI()->InitiateExternalFileDragDrop(path.c_str(), mDragOutRect);
       }
       return;
     case Drag::Knob:
@@ -1075,6 +1103,8 @@ void KeybedControl::OnTextEntryCompletion(const char* str, int valIdx)
     mPlugin.SetSeedValue(ParseSeed(str, mPlugin.SeedValue()));
     mPlugin.SetUseSeed(true);
   }
+  else if (mEdit == Edit::KitName && str)
+    mPlugin.SaveCurrentKit(str);
   mEdit = Edit::None;
   SetDirty(false);
 }
@@ -1252,7 +1282,7 @@ int IndexOf(const std::vector<std::string>& list, const std::string& value)
 
 IText EntryText(float size)
 {
-  return IText(size, COLOR_WHITE, kFont, EAlign::Near, EVAlign::Middle).WithTEColors(PanelDark(), COLOR_WHITE);
+  return IText(size * TextScale, COLOR_WHITE, kFont, EAlign::Near, EVAlign::Middle).WithTEColors(PanelDark(), COLOR_WHITE);
 }
 } // namespace
 
@@ -1323,7 +1353,7 @@ const KeybedControl::KnobHit* KeybedControl::KnobAt(float x, float y) const
 void KeybedControl::DrawKnob(IGraphics& g, const IRECT& bounds, const std::string& value, int step, int steps)
 {
   // IGraphics arcs are in degrees clockwise from 12 o'clock: sweep 270 degrees, 7 to 5 o'clock.
-  const float size = std::min(bounds.W(), bounds.H() - 14.f);
+  const float size = std::min(bounds.W(), bounds.H() - (mPlugin.WideMode() ? 24.f : 18.f));
   const float cx = bounds.MW();
   const float cy = bounds.T + size * 0.5f;
   const float r = size * 0.5f - 3.f;
@@ -1338,16 +1368,16 @@ void KeybedControl::DrawKnob(IGraphics& g, const IRECT& bounds, const std::strin
              cx + std::sin(rad) * (r - 5.f), cy - std::cos(rad) * (r - 5.f), nullptr, 2.f);
 
   // The value under the knob, shrunk to fit its cell.
-  float fontSize = 10.f;
+  float fontSize = mPlugin.WideMode() ? 18.f : 10.f;
   IRECT measured;
-  while (fontSize > 7.f)
+  while (fontSize > (mPlugin.WideMode() ? 14.f : 7.f))
   {
     if (g.MeasureText(IText(fontSize, COLOR_WHITE, kFont), value.c_str(), measured) <= bounds.W() + 8.f)
       break;
     fontSize -= 0.5f;
   }
   g.DrawText(IText(fontSize, COLOR_WHITE, kFont, EAlign::Center, EVAlign::Middle), value.c_str(),
-             IRECT(bounds.L - 6.f, bounds.B - 14.f, bounds.R + 6.f, bounds.B));
+             IRECT(bounds.L - 6.f, bounds.B - (mPlugin.WideMode() ? 24.f : 18.f), bounds.R + 6.f, bounds.B));
 }
 
 void KeybedControl::DrawLock(IGraphics& g, const IRECT& bounds, bool locked)
@@ -1366,22 +1396,25 @@ void KeybedControl::DrawLock(IGraphics& g, const IRECT& bounds, bool locked)
 float KeybedControl::DrawSectionLabel(IGraphics& g, float left, float right, float y, const char* label,
                                       int lockSection, const char* addLabel, SheetAction addAction)
 {
-  g.DrawText(Label(11.f, TextDim()), label, IRECT(left, y, left + 160.f, y + 16.f));
+  const float height = mPlugin.WideMode() ? 24.f : 16.f;
+  g.DrawText(Label(11.f, TextDim()), label, IRECT(left, y, left + 180.f, y + height));
   float x = right;
   if (lockSection >= 0)
   {
-    const IRECT lock(right - 16.f, y, right, y + 16.f);
+    const float lockSize = mPlugin.WideMode() ? 20.f : 16.f;
+    const IRECT lock(right - lockSize, y + (height - lockSize) * 0.5f,
+                     right, y + (height + lockSize) * 0.5f);
     DrawLock(g, lock, mPlugin.Locked(lockSection));
     mSheetHits.push_back({lock.GetPadded(3.f), SheetAction::Lock, lockSection});
     x = lock.L - 10.f;
   }
   if (addLabel)
   {
-    const IRECT add(x - 130.f, y, x, y + 16.f);
+    const IRECT add(x - (mPlugin.WideMode() ? 190.f : 130.f), y, x, y + height);
     g.DrawText(Label(11.f, Red(), EAlign::Far), addLabel, add);
     mSheetHits.push_back({add, addAction, 0});
   }
-  return y + 20.f;
+  return y + (mPlugin.WideMode() ? 30.f : 20.f);
 }
 
 float KeybedControl::DrawKnobRow(IGraphics& g, float left, float right, float y, const std::vector<KnobHit>& knobs,
@@ -1391,25 +1424,28 @@ float KeybedControl::DrawKnobRow(IGraphics& g, float left, float right, float y,
     return y;
   const float gap = 10.f;
   const int n = (int)knobs.size();
-  const float size = std::clamp((right - left - gap * (n - 1)) / (float)n, 44.f, 64.f);
+  const float size = std::clamp((right - left - gap * (n - 1)) / (float)n,
+                                mPlugin.WideMode() ? 56.f : 44.f, mPlugin.WideMode() ? 82.f : 64.f);
   float x = (left + right) * 0.5f - (size * n + gap * (n - 1)) * 0.5f;
   for (int i = 0; i < n; ++i)
   {
     KnobHit knob = knobs[(size_t)i];
-    knob.rect = IRECT(x, y, x + size, y + size + 14.f);
+    const float labelHeight = mPlugin.WideMode() ? 24.f : 18.f;
+    knob.rect = IRECT(x, y, x + size, y + size + labelHeight);
     const auto& vocabulary = KnobVocabulary(knob.kind, knob.index);
     const std::string value = KnobValue(knob.kind, knob.index);
     DrawKnob(g, knob.rect, value, IndexOf(vocabulary, value), (int)vocabulary.size());
     mKnobs.push_back(knob);
     if (removable)
     {
-      const IRECT remove(x, knob.rect.B + 1.f, x + size, knob.rect.B + 15.f);
-      g.DrawText(IText(10.f, TextFaint(), kFont, EAlign::Center, EVAlign::Middle), "remove", remove);
+      const IRECT remove(x, knob.rect.B + 1.f, x + size, knob.rect.B + (mPlugin.WideMode() ? 22.f : 15.f));
+      g.DrawText(IText(10.f * TextScale, TextDim(), kFont, EAlign::Center, EVAlign::Middle), "remove", remove);
       mSheetHits.push_back({remove, SheetAction::RemoveCharacter, knob.index});
     }
     x += size + gap;
   }
-  return y + size + 14.f + (removable ? 16.f : 0.f) + 8.f;
+  return y + size + (mPlugin.WideMode() ? 24.f : 18.f) +
+         (removable ? (mPlugin.WideMode() ? 23.f : 16.f) : 0.f) + 8.f;
 }
 
 void KeybedControl::DrawSoundSheet(IGraphics& g, const IRECT& shell)
@@ -1420,7 +1456,8 @@ void KeybedControl::DrawSoundSheet(IGraphics& g, const IRECT& shell)
   float y = shell.T + 14.f;
 
   g.DrawText(Label(18.f, COLOR_WHITE), "sound", IRECT(left, y, left + 120.f, y + 28.f));
-  g.DrawText(Label(10.f, TextFaint()), "drag, scroll, or right-click a knob", IRECT(left + 64.f, y + 4.f, right - 110.f, y + 28.f));
+  g.DrawText(Label(10.f, TextFaint()), "drag, scroll, or right-click a knob",
+             IRECT(left + (mPlugin.WideMode() ? 135.f : 64.f), y + 4.f, right - 110.f, y + 28.f));
   const IRECT done(right - 56.f, y + 2.f, right, y + 26.f);
   const IRECT dice(done.L - 38.f, y, done.L - 8.f, y + 28.f);
   DrawButton(g, done, "done", kFont);
@@ -1434,24 +1471,25 @@ void KeybedControl::DrawSoundSheet(IGraphics& g, const IRECT& shell)
   y = DrawSectionLabel(g, left, right, y, "instrument", FoundationKeys::kSectionInstrument,
                        sound.second_instrument.empty() ? "+ second instrument" : nullptr, SheetAction::AddSecond);
   const float half = (right - left - 8.f) * 0.5f;
-  const IRECT family(left, y, left + half, y + 24.f);
-  const IRECT type(family.R + 8.f, y, right, y + 24.f);
+  const float fieldHeight = mPlugin.WideMode() ? 32.f : 24.f;
+  const IRECT family(left, y, left + half, y + fieldHeight);
+  const IRECT type(family.R + 8.f, y, right, y + fieldHeight);
   DrawDropButton(g, family, sound.family.empty() ? "family" : sound.family.c_str());
   const bool hasTypes = !kb::vocab::subfamilies(sound.family).empty();
   DrawDropButton(g, type, !sound.subfamily.empty() ? sound.subfamily.c_str() : hasTypes ? "type" : "-");
   mSheetHits.push_back({family, SheetAction::Family, 0});
   if (hasTypes)
     mSheetHits.push_back({type, SheetAction::Type, 0});
-  y += 30.f;
+  y += mPlugin.WideMode() ? 38.f : 30.f;
   if (!sound.second_instrument.empty())
   {
-    const IRECT second(left, y, right - 60.f, y + 24.f);
-    const IRECT remove(second.R + 6.f, y, right, y + 24.f);
+    const IRECT second(left, y, right - (mPlugin.WideMode() ? 86.f : 60.f), y + fieldHeight);
+    const IRECT remove(second.R + 6.f, y, right, y + fieldHeight);
     DrawDropButton(g, second, ("+ " + sound.second_instrument).c_str());
-    g.DrawText(Label(10.f, TextFaint(), EAlign::Center), "remove", remove);
+    g.DrawText(Label(10.f, TextDim(), EAlign::Center), "remove", remove);
     mSheetHits.push_back({second, SheetAction::Second, 0});
     mSheetHits.push_back({remove, SheetAction::RemoveSecond, 0});
-    y += 30.f;
+    y += mPlugin.WideMode() ? 38.f : 30.f;
   }
   y += 4.f;
 
@@ -1463,8 +1501,9 @@ void KeybedControl::DrawSoundSheet(IGraphics& g, const IRECT& shell)
     knobs.push_back({IRECT(), KnobKind::Character, i});
   if (knobs.empty())
   {
-    g.DrawText(Label(10.f, TextFaint()), "no character tags - add one or roll the dice", IRECT(left, y, right, y + 16.f));
-    y += 22.f;
+    g.DrawText(Label(10.f, TextFaint()), "no character tags - add one or roll the dice",
+               IRECT(left, y, right, y + (mPlugin.WideMode() ? 24.f : 16.f)));
+    y += mPlugin.WideMode() ? 28.f : 22.f;
   }
   else
     y = DrawKnobRow(g, left, right, y, knobs, true);
@@ -1472,13 +1511,17 @@ void KeybedControl::DrawSoundSheet(IGraphics& g, const IRECT& shell)
   // shape: articulation and oscillator, each a toggle revealing its knob
   y = DrawSectionLabel(g, left, right, y, "shape", FoundationKeys::kSectionShape, nullptr, SheetAction::Done);
   const float mid = (left + right) * 0.5f;
-  const IRECT articulation(mid - 116.f, y, mid - 4.f, y + 24.f);
-  const IRECT oscillator(mid + 4.f, y, mid + 116.f, y + 24.f);
-  DrawTab(g, articulation, "articulation", kFont, !sound.articulation.empty());
-  DrawTab(g, oscillator, "oscillator", kFont, !sound.oscillator.empty());
+  const float shapeWidth = mPlugin.WideMode() ? 152.f : 112.f;
+  const float shapeHeight = mPlugin.WideMode() ? 32.f : 24.f;
+  const IRECT articulation(mid - shapeWidth - 4.f, y, mid - 4.f, y + shapeHeight);
+  const IRECT oscillator(mid + 4.f, y, mid + shapeWidth + 4.f, y + shapeHeight);
+  DrawTab(g, articulation, "articulation", kFont, !sound.articulation.empty(),
+          mPlugin.WideMode() ? 16.f : TabTextSize);
+  DrawTab(g, oscillator, "oscillator", kFont, !sound.oscillator.empty(),
+          mPlugin.WideMode() ? 16.f : TabTextSize);
   mSheetHits.push_back({articulation, SheetAction::Articulation, 0});
   mSheetHits.push_back({oscillator, SheetAction::Oscillator, 0});
-  y += 30.f;
+  y += mPlugin.WideMode() ? 40.f : 30.f;
   knobs.clear();
   if (!sound.articulation.empty()) knobs.push_back({IRECT(), KnobKind::Articulation, 0});
   if (!sound.oscillator.empty()) knobs.push_back({IRECT(), KnobKind::Oscillator, 0});
@@ -1487,43 +1530,46 @@ void KeybedControl::DrawSoundSheet(IGraphics& g, const IRECT& shell)
   // render fx: dry/wet, then one pedal per FX category. Every layer renders in main's space.
   if (mPlugin.EditLayer() > 0)
   {
-    g.DrawText(Label(11.f, TextDim()), "render fx", IRECT(left, y, left + 160.f, y + 16.f));
-    y += 20.f;
+    g.DrawText(Label(11.f, TextDim()), "render fx",
+               IRECT(left, y, left + 180.f, y + (mPlugin.WideMode() ? 24.f : 16.f)));
+    y += mPlugin.WideMode() ? 30.f : 20.f;
     const std::string fx = mPlugin.FxLabel();
     const std::string shared = std::string("shared with main: ") +
                                (!sound.wet ? "dry" : fx.empty() ? "wet, the model picks the space" : "wet, " + fx);
     g.DrawText(Label(10.f, TextFaint()), Compact(shared, FitChars(right - left, 5.4f)).c_str(),
-               IRECT(left, y, right, y + 16.f));
-    y += 24.f;
+               IRECT(left, y, right, y + (mPlugin.WideMode() ? 24.f : 16.f)));
+    y += mPlugin.WideMode() ? 28.f : 24.f;
   }
   else
   {
   y = DrawSectionLabel(g, left, right, y, "render fx", FoundationKeys::kSectionFx, nullptr, SheetAction::Done);
-  const IRECT dry(left, y, left + 54.f, y + 24.f);
-  const IRECT wet(dry.R + 6.f, y, dry.R + 60.f, y + 24.f);
-  DrawTab(g, dry, "dry", kFont, !sound.wet);
-  DrawTab(g, wet, "wet", kFont, sound.wet);
+  const IRECT dry(left, y, left + (mPlugin.WideMode() ? 70.f : 54.f),
+                  y + (mPlugin.WideMode() ? 32.f : 24.f));
+  const IRECT wet(dry.R + 6.f, y, dry.R + (mPlugin.WideMode() ? 76.f : 60.f), dry.B);
+  DrawTab(g, dry, "dry", kFont, !sound.wet, mPlugin.WideMode() ? 16.f : TabTextSize);
+  DrawTab(g, wet, "wet", kFont, sound.wet, mPlugin.WideMode() ? 16.f : TabTextSize);
   mSheetHits.push_back({dry, SheetAction::Dry, 0});
   mSheetHits.push_back({wet, SheetAction::Wet, 0});
   const char* hint = !sound.wet ? "dry samples: add reverb and delay in your DAW"
                    : sound.fx.empty() ? "no pedals on: the model picks the space"
                                       : "baked into every sample";
-  g.DrawText(Label(10.f, TextFaint()), hint, IRECT(wet.R + 10.f, y, right, y + 24.f));
-  y += 30.f;
+  g.DrawText(Label(10.f, TextFaint()), hint, IRECT(wet.R + 10.f, y, right, dry.B));
+  y += mPlugin.WideMode() ? 38.f : 30.f;
   if (sound.wet)
   {
     const float pedalW = (right - left - 4.f * 6.f) / 5.f;
     knobs.clear();
     for (int i = 0; i < 5; ++i)
     {
-      const IRECT pedal(left + i * (pedalW + 6.f), y, left + i * (pedalW + 6.f) + pedalW, y + 24.f);
+      const IRECT pedal(left + i * (pedalW + 6.f), y, left + i * (pedalW + 6.f) + pedalW,
+                        y + (mPlugin.WideMode() ? 32.f : 24.f));
       const bool on = !KnobValue(KnobKind::Fx, i).empty();
-      DrawTab(g, pedal, kFxNames[i], kFont, on);
+      DrawTab(g, pedal, kFxNames[i], kFont, on, mPlugin.WideMode() ? 16.f : TabTextSize);
       mSheetHits.push_back({pedal, SheetAction::Pedal, i});
       if (on)
         knobs.push_back({IRECT(), KnobKind::Fx, i});
     }
-    y += 30.f;
+    y += mPlugin.WideMode() ? 38.f : 30.f;
     y = DrawKnobRow(g, left, right, y, knobs, false);
   }
   }
@@ -1540,7 +1586,7 @@ void KeybedControl::DrawSoundSheet(IGraphics& g, const IRECT& shell)
     g.DrawRoundRect(Frame(), field, 3.f);
     g.DrawText(Label(11.f, COLOR_WHITE), Compact(sound.extras[(size_t)i], FitChars(field.W() - 12.f, 6.f)).c_str(),
                field.GetHPadded(-6.f));
-    g.DrawText(Label(10.f, TextFaint(), EAlign::Center), "remove", remove);
+    g.DrawText(Label(10.f, TextDim(), EAlign::Center), "remove", remove);
     mSheetHits.push_back({field, SheetAction::EditExtra, i});
     mSheetHits.push_back({remove, SheetAction::RemoveExtra, i});
     y += 26.f;
@@ -1548,51 +1594,54 @@ void KeybedControl::DrawSoundSheet(IGraphics& g, const IRECT& shell)
   mNewExtraRect = IRECT(left, y, right - 60.f, y + 22.f);
   if (sound.extras.empty())
   {
-    g.DrawText(Label(10.f, TextFaint()), "words outside the vocabulary, e.g. tape wobble", IRECT(left, y, right, y + 16.f));
-    y += 20.f;
+    g.DrawText(Label(10.f, TextFaint()), "words outside the vocabulary, e.g. tape wobble",
+               IRECT(left, y, right, y + (mPlugin.WideMode() ? 24.f : 16.f)));
+    y += mPlugin.WideMode() ? 28.f : 20.f;
   }
   y += 4.f;
 
   // the prompt one chunk will send
-  g.DrawText(Label(11.f, TextDim()), "prompt", IRECT(left, y, right, y + 16.f));
-  y += 18.f;
-  const IRECT preview(left, y, right, std::min(shell.B - 14.f, y + 58.f));
+  g.DrawText(Label(11.f, TextDim()), "prompt", IRECT(left, y, right, y + (mPlugin.WideMode() ? 24.f : 16.f)));
+  y += mPlugin.WideMode() ? 28.f : 18.f;
+  const IRECT preview(left, y, right, std::min(shell.B - 14.f, y + (mPlugin.WideMode() ? 72.f : 58.f)));
   g.FillRoundRect(PanelDark(), preview, 3.f);
   g.DrawRoundRect(FrameSoft(), preview, 3.f);
   const std::string prompt = kb::sequence_prompt_of(sound, {60, 61}) + ", ...";
-  g.DrawMultiLineText(IText(10.f, TextDim(), kFont, EAlign::Near, EVAlign::Top), prompt.c_str(), preview.GetPadded(-6.f));
+  g.DrawMultiLineText(IText(10.f * TextScale, TextDim(), kFont, EAlign::Near, EVAlign::Top), prompt.c_str(), preview.GetPadded(-6.f));
 }
 
 float KeybedControl::DrawLayerTabs(IGraphics& g, float left, float right, float y)
 {
   // RC's multi-layered keybeds: a main layer plus up to two supports, each its own full render.
+  const bool wide = mPlugin.WideMode();
   const int count = mPlugin.LayerCount();
   static const char* const names[] = {"main", "support 1", "support 2"};
   float x = left;
   for (int l = 0; l < count; ++l)
   {
-    const IRECT tab(x, y, x + 80.f, y + 24.f);
-    DrawTab(g, tab, names[l], kFont, mPlugin.EditLayer() == l);
+    const IRECT tab(x, y, x + (wide ? 120.f : 80.f), y + (wide ? 34.f : 24.f));
+    DrawTab(g, tab, names[l], kFont, mPlugin.EditLayer() == l, wide ? 16.f : TabTextSize);
     mSheetHits.push_back({tab, SheetAction::Layer, l});
     x = tab.R + 6.f;
   }
   if (count < kb::kLayerCount)
   {
-    const IRECT add(x, y, x + 76.f, y + 24.f);
+    const IRECT add(x, y, x + (wide ? 110.f : 76.f), y + (wide ? 34.f : 24.f));
     g.DrawText(Label(11.f, Red(), EAlign::Center), "+ layer", add);
     mSheetHits.push_back({add, SheetAction::AddLayer, 0});
     if (count == 1)
-      g.DrawText(Label(10.f, TextFaint()), "stack support sounds", IRECT(add.R + 4.f, y, right, y + 24.f));
+      g.DrawText(Label(10.f, TextFaint()), "stack support sounds",
+                 IRECT(add.R + 8.f, y, right, y + (wide ? 34.f : 24.f)));
     x = add.R;
   }
   if (mPlugin.EditLayer() > 0)
   {
     // Beside "+ layer" (or the last tab once all three exist), grey like the sheet's other removes.
-    const IRECT remove(x, y, x + 64.f, y + 24.f);
+    const IRECT remove(x + (wide ? 6.f : 0.f), y, x + (wide ? 116.f : 64.f), y + (wide ? 34.f : 24.f));
     g.DrawText(Label(11.f, TextDim(), EAlign::Center), "- remove", remove);
     mSheetHits.push_back({remove, SheetAction::RemoveLayer, mPlugin.EditLayer()});
   }
-  return y + 32.f;
+  return y + (wide ? 42.f : 32.f);
 }
 
 void KeybedControl::OpenListMenu(Popup popup, const std::vector<std::string>& items, const std::string& current,

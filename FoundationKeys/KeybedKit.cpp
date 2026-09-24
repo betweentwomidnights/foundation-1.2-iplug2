@@ -321,6 +321,67 @@ std::string CreateKitDirectory(const std::string& descriptor, uint64_t seed, con
   return ec ? std::string() : Utf8FromPath(dir);
 }
 
+std::string CreateNamedKitDirectory(const std::string& name, const std::string& kitsDirectory,
+                                    std::string& error)
+{
+  const size_t first = name.find_first_not_of(" \t\r\n");
+  const size_t last = name.find_last_not_of(" \t\r\n");
+  const std::string trimmed = first == std::string::npos ? std::string() : name.substr(first, last - first + 1);
+  if (trimmed.empty() || trimmed.size() > 120 || trimmed == "." || trimmed == ".." || trimmed.back() == '.' ||
+      trimmed.find_first_of("<>:\"/\\|?*") != std::string::npos ||
+      std::any_of(trimmed.begin(), trimmed.end(), [](unsigned char c) { return c < 32; }))
+  {
+    error = "choose a kit name without path or reserved characters";
+    return {};
+  }
+  std::string stem = trimmed.substr(0, trimmed.find('.'));
+  std::transform(stem.begin(), stem.end(), stem.begin(), [](unsigned char c) { return (char)std::toupper(c); });
+  if (stem == "CON" || stem == "PRN" || stem == "AUX" || stem == "NUL" ||
+      (stem.size() == 4 && ((stem.rfind("COM", 0) == 0) || (stem.rfind("LPT", 0) == 0)) &&
+       stem[3] >= '1' && stem[3] <= '9'))
+  {
+    error = "that name is reserved by the operating system";
+    return {};
+  }
+  const std::string kits = kitsDirectory.empty() ? KitsDirectory() : kitsDirectory;
+  if (kits.empty())
+  {
+    error = "choose a kit storage folder first";
+    return {};
+  }
+  try
+  {
+    const fs::path root = PathFromUtf8(kits);
+    std::error_code ec;
+    fs::create_directories(root, ec);
+    if (ec)
+    {
+      error = ec.message();
+      return {};
+    }
+    for (int number = 1; number <= 9999; ++number)
+    {
+      const std::string candidateName = number == 1 ? trimmed : trimmed + " (" + std::to_string(number) + ")";
+      const fs::path candidate = root / PathFromUtf8(candidateName);
+      ec.clear();
+      if (fs::create_directory(candidate, ec))
+        return Utf8FromPath(candidate);
+      if (!fs::exists(candidate))
+      {
+        error = ec ? ec.message() : "could not create the kit folder";
+        return {};
+      }
+    }
+  }
+  catch (const fs::filesystem_error& e)
+  {
+    error = e.what();
+    return {};
+  }
+  error = "too many kits with that name";
+  return {};
+}
+
 bool CopyKitsDirectory(const std::string& source, const std::string& destination, std::string& error)
 {
   const fs::path from = PathFromUtf8(source);
@@ -805,6 +866,54 @@ bool WriteLayeredKitSfz(const std::string& kitDir, const std::vector<std::vector
   {
     error = "cannot write kit.sfz in " + kitDir;
     return false;
+  }
+  return true;
+}
+
+bool SaveKitSamples(const std::string& kitDir, const KitManifest& source,
+                    const std::vector<NoteSamplePtr>& notes, AudioFormat format, std::string& error)
+{
+  const bool layered = source.layerDescriptors.size() > 1;
+  std::vector<std::vector<int>> layerMidis(layered ? source.layerDescriptors.size() : 1);
+  for (const auto& note : notes)
+  {
+    if (!note)
+      continue;
+    const int layer = std::clamp(note->layer, 0, (int)layerMidis.size() - 1);
+    const fs::path folder = PathFromUtf8(kitDir) / (layered ? kb::kLayerDirNames[layer] : "");
+    std::error_code ec;
+    fs::create_directories(folder, ec);
+    if (ec)
+    {
+      error = ec.message();
+      return false;
+    }
+    if (!WriteNoteAudio(Utf8FromPath(folder / NoteFileName(note->midi, format)), *note, format, error))
+      return false;
+    layerMidis[(size_t)layer].push_back(note->midi);
+  }
+  for (size_t layer = 0; layer < layerMidis.size(); ++layer)
+  {
+    KitManifest manifest = source;
+    manifest.audioFormat = format == AudioFormat::Flac ? "flac" : "wav";
+    manifest.soundingMidis = layerMidis[layer];
+    if (layered)
+    {
+      manifest.descriptor = source.layerDescriptors[layer];
+      manifest.seed = layer < source.layerSeeds.size() ? source.layerSeeds[layer] : source.seed;
+      manifest.layerDescriptors.clear();
+      manifest.layerSeeds.clear();
+    }
+    const std::string folder = layered ? Utf8FromPath(PathFromUtf8(kitDir) / kb::kLayerDirNames[layer]) : kitDir;
+    if (!WriteKitManifest(folder, manifest, error) || !WriteKitSfz(folder, layerMidis[layer], format, error))
+      return false;
+  }
+  if (layered)
+  {
+    KitManifest top = source;
+    top.audioFormat = format == AudioFormat::Flac ? "flac" : "wav";
+    if (!WriteKitManifest(kitDir, top, error) || !WriteLayeredKitSfz(kitDir, layerMidis, format, error))
+      return false;
   }
   return true;
 }

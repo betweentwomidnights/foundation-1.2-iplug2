@@ -7,7 +7,6 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
-#include <filesystem>
 #include <random>
 
 namespace kb = sa3::sat::keybed;
@@ -27,11 +26,6 @@ struct CallbackState
   int total = 1;          // chunks across all layers
   const char* layer = "";  // role name for layered builds, empty otherwise
 };
-
-std::string JoinPath(const std::string& dir, const std::string& name)
-{
-  return dir.empty() ? name : dir + "/" + name;
-}
 
 } // namespace
 
@@ -202,41 +196,6 @@ void KeybedRenderService::Run(KeybedJob job, uint64_t requestId)
   for (int l = 0; l < layerCount; ++l)
     manifests.push_back(newManifest(l));
 
-  std::string kitDir;
-  const auto layerDir = [&](int layer) {
-    return layered ? JoinPath(kitDir, kb::kLayerDirNames[layer]) : kitDir;
-  };
-  const auto writeManifests = [&](bool complete, std::string& error) {
-    if (kitDir.empty())
-      return true;
-    for (int l = 0; l < layerCount; ++l)
-    {
-      if (manifests[(size_t)l].soundingMidis.empty())
-        continue;
-      manifests[(size_t)l].complete = complete;
-      if (!WriteKitManifest(layerDir(l), manifests[(size_t)l], error) ||
-          !WriteKitSfz(layerDir(l), manifests[(size_t)l].soundingMidis, job.audioFormat, error))
-        return false;
-    }
-    if (layered)
-    {
-      // The top-level kit.json names the layers; kit.sfz plays them together at RC's mix.
-      KitManifest top = manifests[0];
-      top.seed = baseSeed;
-      top.complete = complete;
-      top.soundingMidis.clear();
-      std::vector<std::vector<int>> midis;
-      for (int l = 0; l < layerCount; ++l)
-      {
-        top.layerDescriptors.push_back(manifests[(size_t)l].descriptor);
-        top.layerSeeds.push_back(manifests[(size_t)l].seed);
-        midis.push_back(manifests[(size_t)l].soundingMidis);
-      }
-      if (!WriteKitManifest(kitDir, top, error) || !WriteLayeredKitSfz(kitDir, midis, job.audioFormat, error))
-        return false;
-    }
-    return true;
-  };
   const auto countNotes = [&]() {
     size_t n = 0;
     for (const auto& m : manifests)
@@ -245,12 +204,6 @@ void KeybedRenderService::Run(KeybedJob job, uint64_t requestId)
   };
 
   auto finish = [&](KeybedEvent::Kind kind, std::string message) {
-    std::string manifestError;
-    if (!writeManifests(kind == KeybedEvent::Kind::Finished, manifestError))
-    {
-      kind = KeybedEvent::Kind::Failed;
-      message = "could not save kit metadata: " + manifestError;
-    }
     {
       std::lock_guard<std::mutex> lock(mMutex);
       mActiveLabels.clear();
@@ -258,7 +211,18 @@ void KeybedRenderService::Run(KeybedJob job, uint64_t requestId)
     }
     KeybedEvent event;
     event.kind = kind;
-    event.kitDir = kitDir;
+    event.manifest = manifests[0];
+    event.manifest.seed = baseSeed;
+    event.manifest.complete = kind == KeybedEvent::Kind::Finished;
+    if (layered)
+    {
+      event.manifest.soundingMidis.clear();
+      for (const auto& layer : manifests)
+      {
+        event.manifest.layerDescriptors.push_back(layer.descriptor);
+        event.manifest.layerSeeds.push_back(layer.seed);
+      }
+    }
     event.message = std::move(message);
     event.seed = baseSeed;
     Push(std::move(event));
@@ -295,17 +259,12 @@ void KeybedRenderService::Run(KeybedJob job, uint64_t requestId)
     mContextKey = key;
   }
 
-  kitDir = CreateKitDirectory(job.layers[0], baseSeed, job.kitsDirectory);
-  if (kitDir.empty())
-    return finish(KeybedEvent::Kind::Failed, "could not create the kit folder in " + job.kitsDirectory);
-
   // Layer by layer, Main first (RC's order): the main keyboard is complete and playable after a
   // third of a layered build, and a cancel still leaves a finished single-layer instrument.
   int done = 0;
   for (int layer = 0; layer < layerCount; ++layer)
   {
     KitManifest& manifest = manifests[(size_t)layer];
-    const std::string dir = layerDir(layer);
     const std::vector<std::string> fx = job.fx;
     for (size_t index = 0; index < job.chunks.size(); ++index, ++done)
     {
@@ -366,21 +325,6 @@ void KeybedRenderService::Run(KeybedJob job, uint64_t requestId)
       mApi->result_free(&result);
       const int64_t frames = (int64_t)audio.size() / std::max(1, channels);
 
-      std::string ioError;
-      if (!kitDir.empty())
-      {
-        char name[64];
-        const std::string extension = AudioFileExtension(job.audioFormat);
-        std::snprintf(name, sizeof name, "chunk_%02zu_labels_%s-%s%s", index + 1,
-                      kb::note_filename(chunk.label_midis.front()).c_str(),
-                      kb::note_filename(chunk.label_midis.back()).c_str(), extension.c_str());
-        std::error_code ec;
-        std::filesystem::create_directories(std::filesystem::u8path(JoinPath(dir, "chunks")), ec);
-        if (!WritePlanarAudio(JoinPath(dir, std::string("chunks/") + name), audio.data(), channels, (int)frames,
-                              sampleRate, job.audioFormat, ioError))
-          return finish(KeybedEvent::Kind::Failed, "could not save rendered chunk: " + ioError);
-      }
-
       for (const kb::NoteSlice& slice : kb::note_slices(chunk.label_midis, sampleRate, frames))
       {
         if (std::find(manifest.soundingMidis.begin(), manifest.soundingMidis.end(), slice.sounding_midi) !=
@@ -398,19 +342,14 @@ void KeybedRenderService::Run(KeybedJob job, uint64_t requestId)
                            planar.begin() + (channels > 1 ? 2 * note->frames : note->frames));
         for (int i = 0; i < note->frames; ++i)
           note->peak = std::max({note->peak, std::fabs(note->left[(size_t)i]), std::fabs(note->right[(size_t)i])});
-        if (!WriteNoteAudio(JoinPath(dir, NoteFileName(note->midi, job.audioFormat)), *note, job.audioFormat, ioError))
-          return finish(KeybedEvent::Kind::Failed, "could not save note sample: " + ioError);
         manifest.soundingMidis.push_back(note->midi);
 
         KeybedEvent event;
         event.kind = KeybedEvent::Kind::Note;
         event.note = std::move(note);
-        event.kitDir = kitDir;
         event.seed = baseSeed;
         Push(std::move(event));
       }
-      if (!writeManifests(false, ioError))
-        return finish(KeybedEvent::Kind::Failed, "could not save kit metadata: " + ioError);
       mProgress.store((float)(done + 1) / (float)totalChunks, std::memory_order_release);
       mLastChunkSeconds.store(std::chrono::duration<double>(std::chrono::steady_clock::now() - chunkStarted).count(),
                               std::memory_order_release);

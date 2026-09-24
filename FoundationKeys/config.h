@@ -1,7 +1,7 @@
 #define PLUG_NAME "Foundation Keys"
 #define PLUG_MFR "the collabage patch"
-#define PLUG_VERSION_HEX 0x00000101
-#define PLUG_VERSION_STR "0.1.1"
+#define PLUG_VERSION_HEX 0x00000102
+#define PLUG_VERSION_STR "0.1.2"
 #define PLUG_UNIQUE_ID 'FnKy'
 #define PLUG_MFR_ID 'Tcpa'
 #define PLUG_URL_STR "https://github.com/betweentwomidnights/foundation-1.2-iplug2"

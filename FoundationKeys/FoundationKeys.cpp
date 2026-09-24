@@ -158,8 +158,7 @@ void FoundationKeys::OnIdle()
     {
       case keybed::KeybedEvent::Kind::Note:
         arrived.push_back(event.note);
-        if (!event.kitDir.empty())
-          mKitDir = event.kitDir;
+        mBuildingNotes.push_back(event.note);
         if (event.seed)
         {
           mLastSeed = event.seed;
@@ -173,11 +172,17 @@ void FoundationKeys::OnIdle()
       {
         const bool failed = event.kind == keybed::KeybedEvent::Kind::Failed;
         SetStatus(event.message, failed);
-        if (!event.kitDir.empty())
+        if (!mBuildingNotes.empty())
         {
-          mKitDir = event.kitDir;
-          std::string ignored;
-          keybed::ReadKitManifest(mKitDir, mManifest, ignored);
+          mManifest = event.manifest;
+          MemoryKit kit;
+          kit.notes = std::move(mBuildingNotes);
+          kit.manifest = mManifest;
+          const auto body = kb::split_descriptor_tokens(mManifest.descriptor).body;
+          kit.label = "kit " + std::to_string(mKitHistory.size() + 1) + " - " +
+                      (body.empty() ? "untitled" : body.front());
+          mKitHistory.push_back(std::move(kit));
+          mHistoryIndex = (int)mKitHistory.size() - 1;
         }
         const double chunkSeconds = mRender.LastChunkSeconds();
         if (chunkSeconds > 0.5 && mSteps > 0)
@@ -652,6 +657,10 @@ bool FoundationKeys::StartJob(std::vector<kb::Chunk> chunks, std::string rangeLa
     return false;
   }
   mJobDescriptor = DescriptorBundle();
+  mBuildingNotes.clear();
+  mKitDir.clear();
+  mHistoryIndex = -1;
+  mBank.Clear();
   mReplaceBankOnNextNote = true;
   {
     std::lock_guard<std::mutex> lock(mKitLoadMutex);   // a render supersedes a kit still loading
@@ -691,9 +700,94 @@ keybed::NoteSamplePtr FoundationKeys::SampleForKey(int key) const
 
 std::string FoundationKeys::KitLabel() const
 {
-  if (mKitDir.empty())
-    return "no kit yet";
-  return keybed::FolderName(mKitDir);
+  if (mHistoryIndex >= 0 && mHistoryIndex < (int)mKitHistory.size())
+  {
+    const MemoryKit& kit = mKitHistory[(size_t)mHistoryIndex];
+    return std::string(kit.dir.empty() ? "RAM " : "saved ") + kit.label;
+  }
+  if (mRender.Busy())
+    return "generating in memory...";
+  return mKitDir.empty() ? "no kit yet" : keybed::FolderName(mKitDir);
+}
+
+bool FoundationKeys::BrowseKit(int direction)
+{
+  if (Busy() || LoadingKit() || mKitHistory.empty())
+    return false;
+  const int next = std::clamp(mHistoryIndex + direction, 0, (int)mKitHistory.size() - 1);
+  if (next == mHistoryIndex)
+    return false;
+  mHistoryIndex = next;
+  const MemoryKit& kit = mKitHistory[(size_t)next];
+  mBank.Publish(kit.notes, true);
+  mManifest = kit.manifest;
+  mKitDir = kit.dir;
+  SetStatus("selected " + kit.label + (kit.dir.empty() ? " (in memory)" : " (saved)"));
+  return true;
+}
+
+std::string FoundationKeys::SuggestedKitName() const
+{
+  if (mHistoryIndex < 0 || mHistoryIndex >= (int)mKitHistory.size())
+    return "";
+  return mKitHistory[(size_t)mHistoryIndex].label;
+}
+
+std::string FoundationKeys::SaveCurrentKit(const std::string& name)
+{
+  if (Busy() || mHistoryIndex < 0 || mHistoryIndex >= (int)mKitHistory.size())
+    return {};
+  MemoryKit& kit = mKitHistory[(size_t)mHistoryIndex];
+  if (!kit.dir.empty())
+    return kit.dir;
+  std::string error;
+  const std::string dir = keybed::CreateNamedKitDirectory(name, mKitsDir, error);
+  if (dir.empty())
+  {
+    SetStatus("could not save kit: " + error, true);
+    return {};
+  }
+  if (!keybed::SaveKitSamples(dir, kit.manifest, kit.notes, mKitAudioFormat, error))
+  {
+    SetStatus("could not save kit: " + error, true);
+    return {};
+  }
+  kit.dir = dir;
+  kit.label = keybed::FolderName(dir);
+  mKitDir = dir;
+  SetStatus("saved kit to " + dir);
+  return dir;
+}
+
+std::string FoundationKeys::ExportNoteForDrag(int key)
+{
+  const keybed::NoteSamplePtr note = key >= 0 && key <= 127 ? SampleForKey(key) : nullptr;
+  if (!note)
+    return {};
+  const std::string existing = NoteFilePath(key);
+  if (!existing.empty())
+    return existing;
+  const std::filesystem::path folder = std::filesystem::u8path(mKitsDir) / "dragged clips";
+  std::error_code ec;
+  std::filesystem::create_directories(folder, ec);
+  if (ec)
+  {
+    SetStatus("could not create dragged clips folder: " + ec.message(), true);
+    return {};
+  }
+  const auto stamp = std::chrono::system_clock::now().time_since_epoch().count();
+  const keybed::AudioFormat format = mKitAudioFormat;
+  const std::string name = "kit-" + std::to_string(KitHistoryPosition()) + "-" + std::to_string(stamp) +
+                           "-" + keybed::NoteFileName(key, format);
+  const std::string path = (folder / name).u8string();
+  std::string error;
+  if (!keybed::WriteNoteAudio(path, *note, format, error))
+  {
+    SetStatus("could not export clip: " + error, true);
+    return {};
+  }
+  SetStatus("dragged clip saved to " + path);
+  return path;
 }
 
 void FoundationKeys::ReleaseModels()
@@ -706,6 +800,11 @@ void FoundationKeys::ReleaseModels()
 
 void FoundationKeys::LoadKitFromFolder(const std::string& dir, bool adoptSettings)
 {
+  if (Busy())
+  {
+    SetStatus("wait for the current build before loading a kit", true);
+    return;
+  }
   if (mKitLoader.joinable())
     mKitLoader.join();
   {
@@ -752,6 +851,13 @@ void FoundationKeys::InstallLoadedKit()
   mBank.Publish(kit.notes, true);
   mKitDir = kit.dir;
   mManifest = kit.manifest;
+  MemoryKit history;
+  history.notes = kit.notes;
+  history.manifest = kit.manifest;
+  history.dir = kit.dir;
+  history.label = keybed::FolderName(kit.dir);
+  mKitHistory.push_back(std::move(history));
+  mHistoryIndex = (int)mKitHistory.size() - 1;
   if (kit.adoptSettings && !kit.manifest.descriptor.empty())
   {
     std::vector<std::string> descriptors = kit.manifest.layerDescriptors;

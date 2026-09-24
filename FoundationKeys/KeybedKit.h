@@ -63,6 +63,9 @@ std::string DefaultModelsDirectory();
 std::string MigratedPath(const std::string& path);
 std::string CreateKitDirectory(const std::string& descriptor, uint64_t seed,
                               const std::string& kitsDirectory = {});
+// Creates a new, user-named kit folder under kitsDirectory. Existing names get a numeric suffix.
+std::string CreateNamedKitDirectory(const std::string& name, const std::string& kitsDirectory,
+                                    std::string& error);
 // Copies existing kits into the selected root, preserving files already there and retaining source.
 bool CopyKitsDirectory(const std::string& source, const std::string& destination, std::string& error);
 
@@ -91,6 +94,9 @@ bool WriteKitSfz(const std::string& kitDir, const std::vector<int>& soundingMidi
 // One SFZ group per layer, at RC's tri-layer volumes, so other samplers play the layers together.
 bool WriteLayeredKitSfz(const std::string& kitDir, const std::vector<std::vector<int>>& layerMidis,
                         AudioFormat audioFormat, std::string& error);
+// Explicit export of a rendered in-memory kit. The destination directory must already exist.
+bool SaveKitSamples(const std::string& kitDir, const KitManifest& manifest,
+                    const std::vector<NoteSamplePtr>& notes, AudioFormat format, std::string& error);
 
 // Loads every note sample named by the manifest (or found by name when the manifest is missing). A
 // layered kit loads each layer's folder, tagging samples with their layer.

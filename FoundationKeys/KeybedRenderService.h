@@ -40,14 +40,14 @@ struct KeybedEvent
   enum class Kind { Note, Finished, Failed, Cancelled };
   Kind kind = Kind::Note;
   NoteSamplePtr note;         // Kind::Note
-  std::string kitDir;
+  KitManifest manifest;       // terminal event; samples remain in memory until exported
   std::string message;
   uint64_t seed = 0;
 };
 
 // One worker thread renders a job's chunks sequentially through libsa3 with one shared seed and a
-// context that stays resident across chunks. Each finished chunk is sliced into notes that are saved
-// into the kit folder and queued for the UI thread (DrainEvents), so keys become playable as they land.
+// context that stays resident across chunks. Each finished chunk is sliced into notes and queued for
+// the UI thread (DrainEvents), so keys become playable as they land without writing to disk.
 class KeybedRenderService
 {
 public:
