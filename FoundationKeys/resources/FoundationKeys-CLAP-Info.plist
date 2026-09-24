@@ -7,7 +7,7 @@
 	<key>CFBundleExecutable</key>
 	<string>FoundationKeys</string>
 	<key>CFBundleGetInfoString</key>
-	<string>Foundation Keys v0.1.1 Copyright 2026 the collabage patch</string>
+	<string>Foundation Keys v0.1.2 Copyright 2026 the collabage patch</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.thecollabagepatch.clap.FoundationKeys</string>
 	<key>CFBundleInfoDictionaryVersion</key>
@@ -17,11 +17,11 @@
 	<key>CFBundlePackageType</key>
 	<string>BNDL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.1.1</string>
+	<string>0.1.2</string>
 	<key>CFBundleSignature</key>
 	<string>PmBl</string>
 	<key>CFBundleVersion</key>
-	<string>0.1.1</string>
+	<string>0.1.2</string>
 	<key>CSResourcesFileMapped</key>
 	<true/>
 	<key>LSMinimumSystemVersion</key>
