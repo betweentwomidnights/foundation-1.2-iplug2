@@ -53,3 +53,16 @@ def transform(path: Path, line: str) -> str:
 
     return line
 ```
+
+=====================================================================
+
+Foundation Keys changes on top of the above, needed to build with clang. Keep
+these if you ever re-vendor FLAC, or macOS stops building:
+
+* BuildConfig.h defines HAVE_LROUND. Otherwise lpc_flac.c defines a static
+  lround for __GNUC__, which clang is, and it collides with the one macOS
+  already declares in <math.h>.
+* bitreader.c and bitwriter.c: dropped `inline` from the eleven functions that
+  are also declared extern at the foot of those files. That C99 idiom emits an
+  out-of-line copy; compiled as C++, as we do, it emits nothing and they go
+  undefined at link.
