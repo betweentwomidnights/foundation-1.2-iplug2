@@ -85,13 +85,21 @@ unoptimized build.
 The backend's runtime libraries are copied beside the plugin and re-pointed at `@loader_path` on macOS, so
 the bundles run off the build machine; libsa3 loads on first render, never at plugin scan. For release
 builds, configure this repo with `-DFOUNDATION_KEYS_DEV_MODELS=OFF` and build sa3.cpp with
-`-DGGML_NATIVE=OFF` (portable CPU code and CUDA architectures). `build.sh`/`build.cmd` take only a backend
-name, so configure that one by hand:
+`-DGGML_NATIVE=OFF` (portable CPU code and CUDA architectures) and `-DSA3_PRIVATE_GGML=ON`.
+`build.sh`/`build.cmd` take only a backend name, so configure that one by hand:
 
 ```
-cd sa3.cpp && cmake -S . -B build-metal -DCMAKE_BUILD_TYPE=Release -DSA3_BUILD_SAT=ON -DSA3_METAL=ON -DGGML_NATIVE=OFF
+cd sa3.cpp && cmake -S . -B build-metal -DCMAKE_BUILD_TYPE=Release -DSA3_BUILD_SAT=ON -DSA3_METAL=ON -DGGML_NATIVE=OFF -DSA3_PRIVATE_GGML=ON
 cmake --build build-metal --config Release -j
 ```
+
+`SA3_PRIVATE_GGML` names ggml's libraries after the backend and ggml commit
+(`sa3-vulkan-ca7bcb6f-ggml.dll`, `sa3-vulkan-ca7bcb6f-ggml-base.dll`, ...). A DAW loads every plugin into
+one process, and Windows binds an import of `ggml.dll` to any `ggml.dll` already loaded there, so with
+plain names an older FoundationKeys or another vendor's ggml-based plugin could hand this one its ggml.
+With the private names, the plugin only shares ggml with a build of the same code. A release configure
+(`-DFOUNDATION_KEYS_DEV_MODELS=OFF`) stops if the sa3.cpp build still uses plain names; a dev configure
+warns.
 
 The headless engine test renders through libsa3 and checks pitch, layers, mono/poly, headroom, kit reload,
 and cancel. It takes a models directory:
